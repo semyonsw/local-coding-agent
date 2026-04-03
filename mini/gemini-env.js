@@ -12,6 +12,19 @@ function parseBoolean(value, defaultValue) {
   return defaultValue;
 }
 
+function parsePositiveInt(value, name, { min = 1, max } = {}) {
+  const numeric = Number(value);
+  if (!Number.isInteger(numeric) || numeric < min) {
+    throw new Error(`Invalid ${name}: ${String(value)}`);
+  }
+
+  if (typeof max === "number" && numeric > max) {
+    throw new Error(`Invalid ${name}: ${String(value)} (must be <= ${max})`);
+  }
+
+  return numeric;
+}
+
 function parseDotEnv(content) {
   const result = {};
   const lines = content.split(/\r?\n/);
@@ -100,13 +113,29 @@ function getGeminiRuntimeConfig(options = {}) {
     true,
   );
 
+  const maxTurns = parsePositiveInt(
+    process.env.GEMINI_MAX_TURNS || "10",
+    "GEMINI_MAX_TURNS",
+  );
+
+  const maxToolCalls = parsePositiveInt(
+    process.env.GEMINI_MAX_TOOL_CALLS || "20",
+    "GEMINI_MAX_TOOL_CALLS",
+  );
+
+  const commandTimeoutMs = parsePositiveInt(
+    process.env.GEMINI_COMMAND_TIMEOUT_MS || "15000",
+    "GEMINI_COMMAND_TIMEOUT_MS",
+    { max: 60000 },
+  );
+
   return {
     apiKey,
     model,
     port,
-    maxTurns: Number(process.env.GEMINI_MAX_TURNS || 10),
-    maxToolCalls: Number(process.env.GEMINI_MAX_TOOL_CALLS || 20),
-    commandTimeoutMs: Number(process.env.GEMINI_COMMAND_TIMEOUT_MS || 15000),
+    maxTurns,
+    maxToolCalls,
+    commandTimeoutMs,
     logDir,
     logLevel,
     logMaxBytes,

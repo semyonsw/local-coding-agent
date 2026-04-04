@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const { getGeminiRuntimeConfig } = require("./gemini-env");
 const { createGeminiAgent } = require("./gemini-agent");
 const { createLogger } = require("./gemini-logger");
+const { saveSession, loadAllSessions, deleteSession } = require("./gemini-sessions");
 
 const ALLOWED_MODELS = [
   "gemini-3-pro-preview",
@@ -13,10 +14,21 @@ const ALLOWED_MODELS = [
   "gemini-3.1-flash-lite",
 ];
 
+const MAX_BODY_BYTES = 1_048_576; // 1 MB
+
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on("data", (chunk) => chunks.push(chunk));
+    let totalBytes = 0;
+    req.on("data", (chunk) => {
+      totalBytes += chunk.length;
+      if (totalBytes > MAX_BODY_BYTES) {
+        req.destroy(new Error("Request body too large"));
+        reject(new Error("Request body too large"));
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on("end", () => {
       try {
         const raw = Buffer.concat(chunks).toString("utf8");
@@ -35,472 +47,63 @@ function sendJson(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-function buildHtml(model, allowedModels) {
-  const allowedModelsJson = JSON.stringify(allowedModels);
-  const initialModelJson = JSON.stringify(model);
+const fs = require("fs");
 
-  return `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Local Code Agent</title>
-    <style>
-      :root {
-        --bg: #000000;
-        --panel: #050505;
-        --panel-soft: #0b0b0b;
-        --line: #252525;
-        --line-strong: #3a3a3a;
-        --text: #f4f4f4;
-        --muted: #a8a8a8;
-        --action: #f2f2f2;
-        --action-text: #060606;
-      }
-      * { box-sizing: border-box; }
-      html,
-      body {
-        height: 100%;
-      }
-      body {
-        margin: 0;
-        font-family: "IBM Plex Sans", "Segoe UI", "Noto Sans", sans-serif;
-        color: var(--text);
-        background: var(--bg);
-        overflow-x: hidden;
-      }
-      .app {
-        min-height: 100vh;
-        width: 100%;
-        background:
-          radial-gradient(1200px 300px at 8% -10%, #121212 0%, transparent 52%),
-          radial-gradient(1000px 300px at 96% -18%, #0d0d0d 0%, transparent 50%),
-          var(--bg);
-        display: grid;
-        grid-template-rows: auto 1fr auto auto;
-      }
-      .header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 16px clamp(12px, 3vw, 32px);
-        border-bottom: 1px solid var(--line);
-        background: rgba(0, 0, 0, 0.82);
-        backdrop-filter: blur(5px);
-      }
-      .title {
-        font-size: 28px;
-        font-weight: 700;
-        letter-spacing: 0.4px;
-      }
-      .meta {
-        color: var(--muted);
-        font-size: 14px;
-      }
+const PUBLIC_DIR = path.join(__dirname, "public");
 
-      .controls {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
+// Cache static files at startup for performance
+let cachedIndexHtml = null;
+let cachedStyleCss = null;
+let cachedAppJs = null;
 
-      .control-label {
-        color: var(--muted);
-        font-size: 13px;
-        letter-spacing: 0.2px;
-      }
-
-      select {
-        background: #090909;
-        color: var(--text);
-        border: 1px solid var(--line-strong);
-        border-radius: 10px;
-        padding: 8px 10px;
-        min-width: 220px;
-      }
-
-      .chat {
-        overflow-y: auto;
-        overflow-x: hidden;
-        padding: 18px clamp(12px, 3vw, 32px);
-      }
-
-      .msg {
-        margin-bottom: 14px;
-        padding: 14px;
-        border-radius: 12px;
-        border: 1px solid var(--line);
-        background: var(--panel-soft);
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
-        word-break: break-word;
-        max-width: 100%;
-      }
-
-      .msg-label {
-        font-weight: 700;
-        margin-bottom: 6px;
-      }
-
-      .msg.user {
-        background: #101010;
-        border-color: #3f3f3f;
-      }
-
-      .msg.assistant {
-        background: #060606;
-        border-color: #222222;
-      }
-
-      .events {
-        margin-top: 10px;
-        border: 1px dashed var(--line-strong);
-        border-radius: 8px;
-        background: #020202;
-      }
-
-      .events summary {
-        cursor: pointer;
-        color: var(--muted);
-        padding: 9px 10px;
-        user-select: none;
-      }
-
-      .events pre {
-        margin: 0;
-        padding: 0 10px 10px;
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
-        word-break: break-word;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 12px;
-        color: #d6d6d6;
-      }
-
-      .composer {
-        border-top: 1px solid var(--line);
-        padding: 12px clamp(12px, 3vw, 32px);
-        display: grid;
-        grid-template-columns: 1fr auto;
-        gap: 8px;
-        background: rgba(0, 0, 0, 0.88);
-      }
-
-      textarea {
-        width: 100%;
-        resize: vertical;
-        min-height: 74px;
-        max-height: 220px;
-        padding: 10px;
-        border: 1px solid var(--line-strong);
-        background: #080808;
-        color: var(--text);
-        border-radius: 10px;
-        font: inherit;
-      }
-
-      textarea::placeholder {
-        color: #888888;
-      }
-
-      textarea:focus-visible {
-        outline: 2px solid #dddddd;
-        outline-offset: 1px;
-      }
-
-      button {
-        border: 1px solid var(--line-strong);
-        border-radius: 10px;
-        padding: 0 14px;
-        font-weight: 600;
-        cursor: pointer;
-        color: var(--action-text);
-        background: var(--action);
-        min-height: 44px;
-      }
-
-      #newBtn {
-        background: #101010;
-        color: var(--text);
-      }
-
-      button:hover {
-        filter: brightness(1.05);
-      }
-
-      button:focus-visible {
-        outline: 2px solid #e7e7e7;
-        outline-offset: 1px;
-      }
-
-      button:disabled {
-        cursor: not-allowed;
-        opacity: 0.55;
-      }
-
-      .status {
-        padding: 8px clamp(12px, 3vw, 32px) 14px;
-        font-size: 13px;
-        color: var(--muted);
-        border-top: 1px solid var(--line);
-      }
-
-      @media (max-width: 700px) {
-        .header {
-          align-items: flex-start;
-          flex-direction: column;
-        }
-
-        .controls {
-          width: 100%;
-          display: grid;
-          grid-template-columns: 1fr;
-          gap: 8px;
-        }
-
-        select {
-          min-width: 0;
-          width: 100%;
-        }
-
-        .composer {
-          grid-template-columns: 1fr;
-        }
-
-        button {
-          height: 42px;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <div class="app">
-      <div class="header">
-        <div>
-          <div class="title">Local Code Agent</div>
-          <div id="modelMeta" class="meta">Model: ${model}</div>
-        </div>
-        <div class="controls">
-          <label class="control-label" for="modelSelect">Model</label>
-          <select id="modelSelect"></select>
-          <button id="newBtn" type="button" onclick="window.__newSession && window.__newSession()">New Session</button>
-        </div>
-      </div>
-
-      <div id="chat" class="chat"></div>
-      <div class="composer">
-        <textarea id="prompt" placeholder="Ask about code, request file edits, or run repo commands..."></textarea>
-        <button id="sendBtn" type="button" onclick="window.__sendPrompt && window.__sendPrompt()">Send</button>
-      </div>
-      <div id="status" class="status">Ready.</div>
-    </div>
-
-    <script>
-      let sessionId = null;
-      const ALLOWED_MODELS = ${allowedModelsJson};
-      let currentModel = ${initialModelJson};
-      const chat = document.getElementById("chat");
-      const promptEl = document.getElementById("prompt");
-      const sendBtn = document.getElementById("sendBtn");
-      const newBtn = document.getElementById("newBtn");
-      const statusEl = document.getElementById("status");
-      const modelSelectEl = document.getElementById("modelSelect");
-      const modelMetaEl = document.getElementById("modelMeta");
-
-      window.addEventListener("error", (e) => {
-        statusEl.textContent = "Client error: " + e.message;
-      });
-
-      function updateModelMeta(model) {
-        modelMetaEl.textContent = "Model: " + model;
-      }
-
-      function renderModelOptions(models, selectedModel) {
-        modelSelectEl.innerHTML = "";
-        for (const model of models) {
-          const option = document.createElement("option");
-          option.value = model;
-          option.textContent = model;
-          option.selected = model === selectedModel;
-          modelSelectEl.appendChild(option);
-        }
-      }
-
-      async function loadModels() {
-        try {
-          const res = await fetch("/api/models");
-          const data = await res.json();
-          if (!res.ok) {
-            throw new Error(data.error || "Failed to load model list");
-          }
-
-          const models = Array.isArray(data.models) && data.models.length
-            ? data.models
-            : ALLOWED_MODELS;
-
-          currentModel = data.model || currentModel;
-          renderModelOptions(models, currentModel);
-          updateModelMeta(currentModel);
-        } catch (error) {
-          renderModelOptions(ALLOWED_MODELS, currentModel);
-          statusEl.textContent = "Model list unavailable: " + error.message;
-        }
-      }
-
-      async function changeModel(model) {
-        if (!model || model === currentModel) return;
-
-        modelSelectEl.disabled = true;
-        statusEl.textContent = "Switching model to " + model + "...";
-
-        try {
-          const res = await fetch("/api/model", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ model }),
-          });
-
-          const data = await res.json();
-          if (!res.ok) {
-            throw new Error(data.error || "Failed to switch model");
-          }
-
-          currentModel = data.model;
-          updateModelMeta(currentModel);
-          modelSelectEl.value = currentModel;
-          statusEl.textContent = "Model switched: " + currentModel;
-        } catch (error) {
-          modelSelectEl.value = currentModel;
-          statusEl.textContent = "Model switch failed: " + error.message;
-        } finally {
-          modelSelectEl.disabled = false;
-        }
-      }
-
-      function formatEvents(events) {
-        return events.map((event) => {
-          if (event.type === "tool_start") {
-            return "[tool:start] " + event.name + " args=" + event.args;
-          }
-
-          if (event.type === "tool_end") {
-            return "[tool:end] " + event.name + " ok=" + event.ok + "\\n" + event.output;
-          }
-
-          return JSON.stringify(event, null, 2);
-        }).join("\\n\\n");
-      }
-
-      function addMessage(kind, text, events = []) {
-        const div = document.createElement("div");
-        div.className = "msg " + kind;
-
-        const labelEl = document.createElement("div");
-        labelEl.className = "msg-label";
-        labelEl.textContent = kind === "user" ? "You" : "Agent";
-
-        const bodyEl = document.createElement("div");
-        bodyEl.textContent = text || "";
-
-        div.appendChild(labelEl);
-        div.appendChild(bodyEl);
-
-        if (Array.isArray(events) && events.length) {
-          const hasFailure = events.some(
-            (event) => event && event.type === "tool_end" && event.ok === false,
-          );
-
-          const detailsEl = document.createElement("details");
-          detailsEl.className = "events";
-          if (hasFailure) {
-            detailsEl.open = true;
-          }
-
-          const summaryEl = document.createElement("summary");
-          summaryEl.textContent = hasFailure
-            ? "Tool activity (attention needed)"
-            : "Tool activity";
-
-          const preEl = document.createElement("pre");
-          preEl.textContent = formatEvents(events);
-
-          detailsEl.appendChild(summaryEl);
-          detailsEl.appendChild(preEl);
-          div.appendChild(detailsEl);
-        }
-
-        chat.appendChild(div);
-        chat.scrollTop = chat.scrollHeight;
-      }
-
-      async function sendPrompt() {
-        const message = promptEl.value.trim();
-        if (!message) return;
-
-        addMessage("user", message);
-        promptEl.value = "";
-        sendBtn.disabled = true;
-        statusEl.textContent = "Thinking...";
-
-        try {
-          const res = await fetch("/api/chat", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ sessionId, message }),
-          });
-
-          const data = await res.json();
-          if (!res.ok) {
-            throw new Error(data.error || "Request failed");
-          }
-
-          sessionId = data.sessionId;
-          if (data.model) {
-            currentModel = data.model;
-            updateModelMeta(currentModel);
-            modelSelectEl.value = currentModel;
-          }
-
-          addMessage("assistant", data.reply, data.events || []);
-          statusEl.textContent = "Session: " + sessionId;
-        } catch (error) {
-          addMessage("assistant", "Error: " + error.message);
-          statusEl.textContent = "Error";
-        } finally {
-          sendBtn.disabled = false;
-          promptEl.focus();
-        }
-      }
-
-      async function newSession() {
-        sessionId = null;
-        chat.innerHTML = "";
-        statusEl.textContent = "New session ready.";
-      }
-
-      window.__sendPrompt = sendPrompt;
-      window.__newSession = newSession;
-
-      sendBtn.addEventListener("click", sendPrompt);
-      newBtn.addEventListener("click", newSession);
-      modelSelectEl.addEventListener("change", (event) => {
-        const value = event.target && event.target.value;
-        changeModel(value);
-      });
-      promptEl.addEventListener("keydown", (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-          sendPrompt();
-        }
-      });
-
-      loadModels();
-    </script>
-  </body>
-</html>`;
+function loadStaticFiles() {
+  cachedIndexHtml = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8");
+  cachedStyleCss = fs.readFileSync(path.join(PUBLIC_DIR, "style.css"), "utf8");
+  cachedAppJs = fs.readFileSync(path.join(PUBLIC_DIR, "app.js"), "utf8");
 }
 
-function startGeminiWebServer(options = {}) {
+function buildHtml(model, allowedModels, token) {
+  if (!cachedIndexHtml) loadStaticFiles();
+
+  return cachedIndexHtml
+    .replace("{{MODEL}}", model)
+    .replace("{{ALLOWED_MODELS}}", JSON.stringify(allowedModels))
+    .replace("{{MODEL_JSON}}", JSON.stringify(model))
+    .replace("{{TOKEN}}", JSON.stringify(token));
+}
+
+const STATIC_CONTENT_TYPES = {
+  ".css": "text/css; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+};
+
+const MAX_SESSIONS = 100;
+const SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour
+const SESSION_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+const RATE_LIMIT_MAX_REQUESTS = 30; // per window per IP
+
+// Simple in-memory token bucket rate limiter
+const rateBuckets = new Map();
+
+function checkRateLimit(ip) {
+  const now = Date.now();
+  let bucket = rateBuckets.get(ip);
+  if (!bucket || now - bucket.windowStart > RATE_LIMIT_WINDOW_MS) {
+    bucket = { windowStart: now, count: 0 };
+    rateBuckets.set(ip, bucket);
+  }
+  bucket.count += 1;
+  return bucket.count <= RATE_LIMIT_MAX_REQUESTS;
+}
+
+function setCorsHeaders(res, port) {
+  res.setHeader("Access-Control-Allow-Origin", `http://localhost:${port}`);
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+}
+
+async function startGeminiWebServer(options = {}) {
   const rootDir = options.rootDir || path.resolve(__dirname, "..");
   const runtime = getGeminiRuntimeConfig({
     rootDir,
@@ -514,6 +117,9 @@ function startGeminiWebServer(options = {}) {
     maxBytes: runtime.logMaxBytes,
   });
   const serverLogger = logger.child({ component: "web" });
+
+  // Generate auth token for this server instance
+  const authToken = crypto.randomBytes(32).toString("hex");
 
   const fallbackModel = "gemini-3-flash-preview";
   let currentModel = ALLOWED_MODELS.includes(runtime.model)
@@ -535,6 +141,7 @@ function startGeminiWebServer(options = {}) {
     maxTurns: runtime.maxTurns,
     maxToolCalls: runtime.maxToolCalls,
     commandTimeoutMs: runtime.commandTimeoutMs,
+    maxOutputTokens: runtime.maxOutputTokens,
     allowOutsideRoot: runtime.allowOutsideRoot,
     logger: logger.child({ component: "agent" }),
   });
@@ -551,26 +158,70 @@ function startGeminiWebServer(options = {}) {
     logFile: logger.getLogFilePath(),
   });
 
-  const sessions = new Map();
+  const sessionsDir = path.join(rootDir, "sessions");
+  const sessions = await loadAllSessions(sessionsDir, serverLogger);
+  if (sessions.size > 0) {
+    serverLogger.info("sessions_restored", { count: sessions.size });
+  }
+
+  function evictStaleSessions() {
+    const now = Date.now();
+    for (const [id, session] of sessions) {
+      if (now - session.lastAccessedAt > SESSION_TTL_MS) {
+        sessions.delete(id);
+        deleteSession(sessionsDir, id).catch(() => {});
+        serverLogger.info("session_evicted", { sessionId: id });
+      }
+    }
+  }
+
+  const cleanupTimer = setInterval(evictStaleSessions, SESSION_CLEANUP_INTERVAL_MS);
+  cleanupTimer.unref();
 
   function getOrCreateSession(requestedId) {
     if (requestedId && sessions.has(requestedId)) {
       const existing = sessions.get(requestedId);
+      existing.lastAccessedAt = Date.now();
       if (!existing.currentDir) {
         existing.currentDir = rootDir;
       }
       return existing;
     }
 
+    // Evict oldest session if at capacity
+    if (sessions.size >= MAX_SESSIONS) {
+      let oldestId = null;
+      let oldestTime = Infinity;
+      for (const [id, s] of sessions) {
+        if (s.lastAccessedAt < oldestTime) {
+          oldestTime = s.lastAccessedAt;
+          oldestId = id;
+        }
+      }
+      if (oldestId) {
+        sessions.delete(oldestId);
+        deleteSession(sessionsDir, oldestId).catch(() => {});
+        serverLogger.info("session_evicted_capacity", { sessionId: oldestId });
+      }
+    }
+
     const id = crypto.randomUUID();
+    const now = Date.now();
     const session = {
       id,
       contents: [],
       totalToolCalls: 0,
       currentDir: rootDir,
+      createdAt: now,
+      lastAccessedAt: now,
     };
     sessions.set(id, session);
     return session;
+  }
+
+  function checkAuth(req) {
+    const authHeader = req.headers["authorization"] || "";
+    return authHeader === `Bearer ${authToken}`;
   }
 
   const server = http.createServer(async (req, res) => {
@@ -585,10 +236,51 @@ function startGeminiWebServer(options = {}) {
 
     try {
       const url = req.url || "/";
+
+      // CORS headers on all responses
+      setCorsHeaders(res, runtime.port);
+
+      // Handle CORS preflight
+      if (req.method === "OPTIONS") {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      // Rate limiting on API routes
+      if (url.startsWith("/api/")) {
+        const clientIp = req.socket?.remoteAddress || "unknown";
+        if (!checkRateLimit(clientIp)) {
+          res.setHeader("Retry-After", "60");
+          sendJson(res, 429, { error: "Too many requests" });
+          reqLogger.warn("http_request_end", { status: 429 });
+          return;
+        }
+
+        // Auth check for API routes
+        if (!checkAuth(req)) {
+          sendJson(res, 401, { error: "Unauthorized" });
+          reqLogger.warn("http_request_end", { status: 401 });
+          return;
+        }
+      }
+
       if (req.method === "GET" && url === "/") {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        res.end(buildHtml(currentModel, ALLOWED_MODELS));
+        res.end(buildHtml(currentModel, ALLOWED_MODELS, authToken));
         reqLogger.info("http_request_end", { status: 200 });
+        return;
+      }
+
+      // Serve static assets from mini/public/
+      if (req.method === "GET" && (url === "/style.css" || url === "/app.js")) {
+        if (!cachedStyleCss) loadStaticFiles();
+        const ext = path.extname(url);
+        const contentType = STATIC_CONTENT_TYPES[ext] || "application/octet-stream";
+        const content = url === "/style.css" ? cachedStyleCss : cachedAppJs;
+        res.writeHead(200, { "content-type": contentType });
+        res.end(content);
+        reqLogger.info("http_request_end", { status: 200, route: "static" });
         return;
       }
 
@@ -611,6 +303,47 @@ function startGeminiWebServer(options = {}) {
           models: ALLOWED_MODELS,
         });
         reqLogger.info("http_request_end", { status: 200, route: "models" });
+        return;
+      }
+
+      if (req.method === "GET" && url === "/api/sessions") {
+        const list = [];
+        for (const [, s] of sessions) {
+          const messageCount = s.contents.filter((c) => c.role === "user").length;
+          list.push({
+            id: s.id,
+            createdAt: s.createdAt,
+            lastAccessedAt: s.lastAccessedAt,
+            messageCount,
+          });
+        }
+        list.sort((a, b) => b.lastAccessedAt - a.lastAccessedAt);
+        sendJson(res, 200, { sessions: list });
+        reqLogger.info("http_request_end", { status: 200, route: "sessions" });
+        return;
+      }
+
+      if (req.method === "GET" && url.startsWith("/api/sessions/") && url.endsWith("/export")) {
+        const exportId = url.slice("/api/sessions/".length, -"/export".length);
+        const exportSession = sessions.get(exportId);
+        if (!exportSession) {
+          sendJson(res, 404, { error: "Session not found" });
+          reqLogger.warn("http_request_end", { status: 404, route: "session_export" });
+          return;
+        }
+        const messages = exportSession.contents.map((c) => ({
+          role: c.role,
+          text: c.parts
+            .map((p) => p.text || (p.functionCall ? `[tool: ${p.functionCall.name}]` : "") || (p.functionResponse ? `[result: ${p.functionResponse.name}]` : ""))
+            .join("\n"),
+        }));
+        sendJson(res, 200, {
+          id: exportSession.id,
+          createdAt: exportSession.createdAt,
+          messages,
+          exportedAt: new Date().toISOString(),
+        });
+        reqLogger.info("http_request_end", { status: 200, route: "session_export" });
         return;
       }
 
@@ -680,6 +413,7 @@ function startGeminiWebServer(options = {}) {
           messageLength: message.length,
         });
         const result = await agent.sendMessage(session, message);
+        saveSession(sessionsDir, session).catch(() => {});
 
         sendJson(res, 200, {
           sessionId: session.id,
@@ -698,6 +432,55 @@ function startGeminiWebServer(options = {}) {
         return;
       }
 
+      if (req.method === "POST" && url === "/api/chat/stream") {
+        const body = await readJsonBody(req);
+        const message =
+          typeof body.message === "string" ? body.message.trim() : "";
+        if (!message) {
+          sendJson(res, 400, { error: "message is required" });
+          reqLogger.warn("http_request_end", { status: 400, route: "chat/stream" });
+          return;
+        }
+
+        const session = getOrCreateSession(body.sessionId);
+        reqLogger.info("chat_stream_request", {
+          sessionId: session.id,
+          messageLength: message.length,
+        });
+
+        res.writeHead(200, {
+          "content-type": "text/event-stream; charset=utf-8",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+        });
+
+        // Send session ID immediately so the client can track it
+        res.write(`data: ${JSON.stringify({ type: "session", sessionId: session.id })}\n\n`);
+
+        let closed = false;
+        req.on("close", () => { closed = true; });
+
+        try {
+          await agent.sendMessage(session, message, (event) => {
+            if (closed) return;
+            res.write(`data: ${JSON.stringify(event)}\n\n`);
+          });
+          saveSession(sessionsDir, session).catch(() => {});
+        } catch (streamError) {
+          if (!closed) {
+            const errMsg = streamError instanceof Error ? streamError.message : String(streamError);
+            res.write(`data: ${JSON.stringify({ type: "error", message: errMsg })}\n\n`);
+          }
+        }
+
+        if (!closed) {
+          res.write("data: [DONE]\n\n");
+          res.end();
+        }
+        reqLogger.info("http_request_end", { status: 200, route: "chat/stream", sessionId: session.id });
+        return;
+      }
+
       sendJson(res, 404, { error: "Not found" });
       reqLogger.warn("http_request_end", { status: 404 });
     } catch (error) {
@@ -710,8 +493,9 @@ function startGeminiWebServer(options = {}) {
     }
   });
 
-  server.listen(runtime.port, () => {
+  server.listen(runtime.port, "127.0.0.1", () => {
     console.log(`Local Code Agent running at http://localhost:${runtime.port}`);
+    console.log(`Auth token: ${authToken}`);
     console.log(`Model: ${currentModel}`);
     console.log(`Max turns: ${runtime.maxTurns}`);
     console.log(`Max tool calls: ${runtime.maxToolCalls}`);
@@ -722,6 +506,20 @@ function startGeminiWebServer(options = {}) {
     }
     console.log("Tip: Use Ctrl/Cmd+Enter to send quickly from the textarea.");
   });
+
+  // Graceful shutdown
+  function shutdown(signal) {
+    serverLogger.info("shutdown_start", { signal });
+    console.log(`\nReceived ${signal}, shutting down...`);
+    clearInterval(cleanupTimer);
+    server.close(() => {
+      serverLogger.info("shutdown_complete");
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(1), 5000).unref();
+  }
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
 module.exports = {

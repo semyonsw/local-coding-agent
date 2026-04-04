@@ -110,23 +110,31 @@ function getGeminiRuntimeConfig(options = {}) {
 
   const allowOutsideRoot = parseBoolean(
     process.env.GEMINI_ALLOW_OUTSIDE_ROOT,
-    true,
+    false,
   );
 
   const maxTurns = parsePositiveInt(
     process.env.GEMINI_MAX_TURNS || "10",
     "GEMINI_MAX_TURNS",
+    { max: 200 },
   );
 
   const maxToolCalls = parsePositiveInt(
     process.env.GEMINI_MAX_TOOL_CALLS || "20",
     "GEMINI_MAX_TOOL_CALLS",
+    { max: 200 },
   );
 
   const commandTimeoutMs = parsePositiveInt(
     process.env.GEMINI_COMMAND_TIMEOUT_MS || "15000",
     "GEMINI_COMMAND_TIMEOUT_MS",
     { max: 60000 },
+  );
+
+  const maxOutputTokens = parsePositiveInt(
+    process.env.GEMINI_MAX_OUTPUT_TOKENS || "8192",
+    "GEMINI_MAX_OUTPUT_TOKENS",
+    { max: 65536 },
   );
 
   return {
@@ -136,6 +144,7 @@ function getGeminiRuntimeConfig(options = {}) {
     maxTurns,
     maxToolCalls,
     commandTimeoutMs,
+    maxOutputTokens,
     logDir,
     logLevel,
     logMaxBytes,

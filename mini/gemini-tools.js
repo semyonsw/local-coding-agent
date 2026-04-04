@@ -146,9 +146,9 @@ function asDisplayPath(rootDir, absPath) {
   return outside ? absPath : rel;
 }
 
-function listDirTool(rootDir, args, options = {}) {
+async function listDirTool(rootDir, args, options = {}) {
   const target = resolveToolPath(rootDir, args.path || ".", options);
-  const entries = fs.readdirSync(target, { withFileTypes: true });
+  const entries = await fs.promises.readdir(target, { withFileTypes: true });
 
   const items = entries.slice(0, 300).map((d) => {
     const full = path.join(target, d.name);
@@ -169,18 +169,18 @@ function listDirTool(rootDir, args, options = {}) {
   };
 }
 
-function readFileTool(rootDir, args, options = {}) {
+async function readFileTool(rootDir, args, options = {}) {
   if (!args.path || typeof args.path !== "string") {
     throw new Error("read_file requires a string path");
   }
 
   const target = resolveToolPath(rootDir, args.path, options);
-  const stat = fs.statSync(target);
+  const stat = await fs.promises.stat(target);
   if (!stat.isFile()) {
     throw new Error(`Not a file: ${args.path}`);
   }
 
-  const buf = fs.readFileSync(target);
+  const buf = await fs.promises.readFile(target);
   const used = buf.subarray(0, MAX_FILE_READ_BYTES);
   const text = used.toString("utf8");
 
@@ -208,7 +208,7 @@ function readFileTool(rootDir, args, options = {}) {
   };
 }
 
-function writeFileTool(rootDir, args, options = {}) {
+async function writeFileTool(rootDir, args, options = {}) {
   if (!args.path || typeof args.path !== "string") {
     throw new Error("write_file requires a string path");
   }
@@ -219,13 +219,13 @@ function writeFileTool(rootDir, args, options = {}) {
   }
 
   const target = resolveToolPath(rootDir, args.path, options);
-  fs.mkdirSync(path.dirname(target), { recursive: true });
+  await fs.promises.mkdir(path.dirname(target), { recursive: true });
 
   const append = Boolean(args.append);
   if (append) {
-    fs.appendFileSync(target, content, "utf8");
+    await fs.promises.appendFile(target, content, "utf8");
   } else {
-    fs.writeFileSync(target, content, "utf8");
+    await fs.promises.writeFile(target, content, "utf8");
   }
 
   return {
@@ -244,11 +244,42 @@ function validateCommand(command) {
   }
 
   const blockedPatterns = [
-    /(^|\s)rm\s+-rf\s+\//i,
-    /(^|\s)shutdown(\s|$)/i,
-    /(^|\s)reboot(\s|$)/i,
-    /(^|\s)mkfs(\s|$)/i,
+    // Destructive filesystem operations
+    /(^|\s|&&|\|)rm\s+-[a-zA-Z]*r[a-zA-Z]*f/i,
+    /(^|\s|&&|\|)rm\s+-[a-zA-Z]*f[a-zA-Z]*r/i,
+    /(^|\s|&&|\|)rm\s+-rf\s+[~/.]/i,
+    // System control
+    /(^|\s|&&|\|)shutdown(\s|$)/i,
+    /(^|\s|&&|\|)reboot(\s|$)/i,
+    /(^|\s|&&|\|)mkfs(\s|$)/i,
+    /(^|\s|&&|\|)dd\s+/i,
+    /(^|\s|&&|\|)format(\s|$)/i,
+    // Privilege escalation
+    /(^|\s|&&|\|)sudo(\s|$)/i,
+    /(^|\s|&&|\|)su\s+-/i,
+    // Permission bombs
+    /(^|\s|&&|\|)chmod\s+(-R\s+)?777/i,
+    /(^|\s|&&|\|)chmod\s+(-R\s+)?a\+rwx/i,
+    // Remote code execution via pipe
+    /curl\s+.*\|\s*(ba)?sh/i,
+    /wget\s+.*\|\s*(ba)?sh/i,
+    /curl\s+.*\|\s*python/i,
+    /wget\s+.*-O\s*-\s*\|\s*(ba)?sh/i,
+    // Fork bombs
     /:\(\)\s*\{\s*:\|:&\s*;\s*\}/,
+    /perl\s+-e\s*.*fork/i,
+    // Dangerous git operations
+    /git\s+push\s+.*--force(\s|$)/i,
+    /git\s+push\s+-f(\s|$)/i,
+    // Network exfiltration tools (outbound)
+    /(^|\s|&&|\|)nc\s+-[a-zA-Z]*l/i,
+    /(^|\s|&&|\|)ncat(\s|$)/i,
+    // PowerShell destructive cmdlets
+    /Remove-Item\s+.*-Recurse/i,
+    /Format-Volume/i,
+    /Stop-Computer/i,
+    /Restart-Computer/i,
+    /Clear-Disk/i,
   ];
 
   for (const pattern of blockedPatterns) {
@@ -293,7 +324,9 @@ function runCommandTool(rootDir, args, options = {}) {
         cwd,
         timeout: timeoutMs,
         maxBuffer: 1024 * 1024,
-        shell: "/bin/bash",
+        shell: process.platform === "win32"
+        ? process.env.COMSPEC || "cmd.exe"
+        : process.env.SHELL || "/bin/bash",
       },
       (error, stdout, stderr) => {
         if (error) {
@@ -324,13 +357,13 @@ function runCommandTool(rootDir, args, options = {}) {
   });
 }
 
-function changeDirTool(rootDir, args, options = {}) {
+async function changeDirTool(rootDir, args, options = {}) {
   if (!args.path || typeof args.path !== "string") {
     throw new Error("change_dir requires a string path");
   }
 
   const target = resolveToolPath(rootDir, args.path, options);
-  const stat = fs.statSync(target);
+  const stat = await fs.promises.stat(target);
 
   if (!stat.isDirectory()) {
     throw new Error(`Not a directory: ${args.path}`);
@@ -448,13 +481,13 @@ async function executeToolCall(rootDir, toolCall, options = {}) {
     let result;
     switch (name) {
       case "list_dir":
-        result = listDirTool(rootDir, args, options);
+        result = await listDirTool(rootDir, args, options);
         break;
       case "read_file":
-        result = readFileTool(rootDir, args, options);
+        result = await readFileTool(rootDir, args, options);
         break;
       case "write_file":
-        result = writeFileTool(rootDir, args, options);
+        result = await writeFileTool(rootDir, args, options);
         break;
       case "run_command":
         result = await runCommandTool(rootDir, args, {
@@ -464,7 +497,7 @@ async function executeToolCall(rootDir, toolCall, options = {}) {
         });
         break;
       case "change_dir":
-        result = changeDirTool(rootDir, args, options);
+        result = await changeDirTool(rootDir, args, options);
         break;
       default:
         result = { ok: false, error: `Unknown tool: ${String(name)}` };

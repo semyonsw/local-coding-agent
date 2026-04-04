@@ -58,13 +58,13 @@ function getTodayLogName(prefix) {
   return `${prefix}-${date}.log`;
 }
 
-function maybeRotate(logFilePath, maxBytes) {
+async function maybeRotate(logFilePath, maxBytes) {
   try {
-    const stat = fs.statSync(logFilePath);
+    const stat = await fs.promises.stat(logFilePath);
     if (stat.size < maxBytes) return;
 
     const rotated = `${logFilePath}.${Date.now()}.bak`;
-    fs.renameSync(logFilePath, rotated);
+    await fs.promises.rename(logFilePath, rotated);
   } catch {
     // Ignore missing file and rotation failures to avoid crashing chat path.
   }
@@ -89,13 +89,12 @@ function createLogger(options = {}) {
     return path.join(logDir, getTodayLogName(prefix));
   }
 
+  // Fire-and-forget async write -- never blocks the event loop
   function write(level, event, data) {
     const levelValue = LEVELS[level] || LEVELS.info;
     if (levelValue < minLevel) return;
 
     const logFilePath = getLogFilePath();
-    maybeRotate(logFilePath, maxBytes);
-
     const entry = {
       ts: new Date().toISOString(),
       level,
@@ -103,11 +102,17 @@ function createLogger(options = {}) {
       data: sanitizeValue(data),
     };
 
-    try {
-      fs.appendFileSync(logFilePath, `${JSON.stringify(entry)}\n`, "utf8");
-    } catch {
-      // Do not throw from logger path.
-    }
+    maybeRotate(logFilePath, maxBytes)
+      .then(() =>
+        fs.promises.appendFile(
+          logFilePath,
+          `${JSON.stringify(entry)}\n`,
+          "utf8",
+        ),
+      )
+      .catch(() => {
+        // Do not throw from logger path.
+      });
   }
 
   function child(defaultFields = {}) {

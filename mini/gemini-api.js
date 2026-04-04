@@ -21,10 +21,10 @@ async function postGenerateContent({
   systemInstruction,
   functionDeclarations,
   temperature = 0.2,
-  maxOutputTokens = 1536,
+  maxOutputTokens = 8192,
   retryCount = 3,
 }) {
-  const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent`;
 
   const body = {
     contents,
@@ -58,6 +58,7 @@ async function postGenerateContent({
         method: "POST",
         headers: {
           "content-type": "application/json",
+          "x-goog-api-key": apiKey,
         },
         body: JSON.stringify(body),
       });

@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Local Code Agent</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x1F916;</text></svg>">
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <div class="header">
+        <div>
+          <div class="title">Local Code Agent</div>
+          <div id="modelMeta" class="meta">Model: {{MODEL}}</div>
+        </div>
+        <div class="controls">
+          <label class="control-label" for="modelSelect">Model</label>
+          <select id="modelSelect"></select>
+          <button id="newBtn" type="button">New Session</button>
+          <button id="exportBtn" type="button">Export</button>
+        </div>
+      </div>
+
+      <div id="chat" class="chat"></div>
+      <div class="composer">
+        <div>
+          <textarea id="prompt" placeholder="Ask about code, request file edits, or run repo commands..."></textarea>
+          <div class="kbd-hint">Ctrl+Enter to send</div>
+        </div>
+        <button id="sendBtn" type="button">Send</button>
+      </div>
+      <div id="status" class="status">Ready.</div>
+    </div>
+
+    <script>
+      // Server-injected template variables
+      const __ALLOWED_MODELS__ = {{ALLOWED_MODELS}};
+      const __INITIAL_MODEL__ = {{MODEL_JSON}};
+      const __AUTH_TOKEN__ = {{TOKEN}};
+    </script>
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -17,7 +17,8 @@ function createGeminiAgent(config) {
     maxTurns = 10,
     maxToolCalls = 20,
     commandTimeoutMs = 15000,
-    allowOutsideRoot = true,
+    maxOutputTokens = 8192,
+    allowOutsideRoot = false,
     logger = noopLogger(),
   } = config;
 
@@ -33,8 +34,9 @@ function createGeminiAgent(config) {
     "When using run_command, avoid destructive operations.",
   ].join(" ");
 
-  async function sendMessage(session, userMessage) {
+  async function sendMessage(session, userMessage, onEvent) {
     const events = [];
+    const emit = typeof onEvent === "function" ? onEvent : () => {};
     const startedAt = Date.now();
 
     if (!session.currentDir) {
@@ -66,6 +68,7 @@ function createGeminiAgent(config) {
         contents: session.contents,
         systemInstruction,
         functionDeclarations: TOOL_DECLARATIONS,
+        maxOutputTokens,
       });
 
       const parsed = parseModelTurn(payload);
@@ -76,42 +79,49 @@ function createGeminiAgent(config) {
 
       if (parsed.functionCalls.length === 0) {
         finalText = parsed.text || "I could not produce a textual response.";
+        emit({ type: "text", text: finalText });
         logger.info("agent_message_end", {
           sessionId: session.id,
           finishReason: parsed.finishReason,
           turnsUsed: turn + 1,
           durationMs: Date.now() - startedAt,
         });
-        return {
+        const result = {
           sessionId: session.id,
           reply: finalText,
           events,
           finishReason: parsed.finishReason,
         };
+        emit({ type: "done", finishReason: parsed.finishReason, sessionId: session.id });
+        return result;
       }
 
       for (const call of parsed.functionCalls) {
         if (session.totalToolCalls >= maxToolCalls) {
+          const budgetMsg = "Stopped because tool-call budget was reached. Ask me to continue if you want another pass.";
+          emit({ type: "text", text: budgetMsg });
           logger.warn("agent_tool_budget_reached", {
             sessionId: session.id,
             totalToolCalls: session.totalToolCalls,
             maxToolCalls,
             durationMs: Date.now() - startedAt,
           });
+          emit({ type: "done", finishReason: "tool_call_budget", sessionId: session.id });
           return {
             sessionId: session.id,
-            reply:
-              "Stopped because tool-call budget was reached. Ask me to continue if you want another pass.",
+            reply: budgetMsg,
             events,
             finishReason: "tool_call_budget",
           };
         }
 
-        events.push({
+        const toolStartEvent = {
           type: "tool_start",
           name: call.name,
           args: truncateForEvent(call.args),
-        });
+        };
+        events.push(toolStartEvent);
+        emit(toolStartEvent);
 
         logger.info("agent_tool_start", {
           sessionId: session.id,
@@ -132,12 +142,14 @@ function createGeminiAgent(config) {
 
         session.totalToolCalls += 1;
 
-        events.push({
+        const toolEndEvent = {
           type: "tool_end",
           name: call.name,
           ok: toolResult.ok,
           output: truncateForEvent(toolResult),
-        });
+        };
+        events.push(toolEndEvent);
+        emit(toolEndEvent);
 
         logger.info("agent_tool_end", {
           sessionId: session.id,
@@ -172,16 +184,18 @@ function createGeminiAgent(config) {
       }
     }
 
+    const maxTurnsMsg = "Stopped because max model turns were reached. Ask me to continue if needed.";
+    emit({ type: "text", text: maxTurnsMsg });
     logger.warn("agent_message_end", {
       sessionId: session.id,
       finishReason: "max_turns",
       durationMs: Date.now() - startedAt,
     });
+    emit({ type: "done", finishReason: "max_turns", sessionId: session.id });
 
     return {
       sessionId: session.id,
-      reply:
-        "Stopped because max model turns were reached. Ask me to continue if needed.",
+      reply: maxTurnsMsg,
       events,
       finishReason: "max_turns",
     };

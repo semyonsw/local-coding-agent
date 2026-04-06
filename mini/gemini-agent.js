@@ -18,6 +18,7 @@ function createGeminiAgent(config) {
     maxToolCalls = 20,
     commandTimeoutMs = 15000,
     maxOutputTokens = 8192,
+    thinkingBudget = 0,
     allowOutsideRoot = false,
     logger = noopLogger(),
   } = config;
@@ -69,9 +70,15 @@ function createGeminiAgent(config) {
         systemInstruction,
         functionDeclarations: TOOL_DECLARATIONS,
         maxOutputTokens,
+        thinkingBudget,
       });
 
       const parsed = parseModelTurn(payload);
+
+      if (parsed.thinking) {
+        emit({ type: "thinking", text: parsed.thinking });
+      }
+
       session.contents.push({
         role: "model",
         parts: parsed.parts,

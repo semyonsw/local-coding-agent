@@ -142,6 +142,7 @@ async function startGeminiWebServer(options = {}) {
     maxToolCalls: runtime.maxToolCalls,
     commandTimeoutMs: runtime.commandTimeoutMs,
     maxOutputTokens: runtime.maxOutputTokens,
+    thinkingBudget: runtime.thinkingBudget,
     allowOutsideRoot: runtime.allowOutsideRoot,
     logger: logger.child({ component: "agent" }),
   });
@@ -374,6 +375,8 @@ async function startGeminiWebServer(options = {}) {
             maxTurns: runtime.maxTurns,
             maxToolCalls: runtime.maxToolCalls,
             commandTimeoutMs: runtime.commandTimeoutMs,
+            maxOutputTokens: runtime.maxOutputTokens,
+            thinkingBudget: runtime.thinkingBudget,
             allowOutsideRoot: runtime.allowOutsideRoot,
             logger: logger.child({ component: "agent" }),
           });

@@ -137,6 +137,12 @@ function getGeminiRuntimeConfig(options = {}) {
     { max: 65536 },
   );
 
+  const thinkingBudgetRaw = process.env.GEMINI_THINKING_BUDGET || "0";
+  const thinkingBudget = Number(thinkingBudgetRaw);
+  if (!Number.isFinite(thinkingBudget) || thinkingBudget < 0) {
+    throw new Error(`Invalid GEMINI_THINKING_BUDGET: ${String(thinkingBudgetRaw)}`);
+  }
+
   return {
     apiKey,
     model,
@@ -145,6 +151,7 @@ function getGeminiRuntimeConfig(options = {}) {
     maxToolCalls,
     commandTimeoutMs,
     maxOutputTokens,
+    thinkingBudget,
     logDir,
     logLevel,
     logMaxBytes,

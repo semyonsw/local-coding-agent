@@ -22,8 +22,10 @@ body {
   overflow-x: hidden;
 }
 .app {
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
   width: 100%;
+  overflow: hidden;
   background:
     radial-gradient(1200px 300px at 8% -10%, #121212 0%, transparent 52%),
     radial-gradient(1000px 300px at 96% -18%, #0d0d0d 0%, transparent 50%),
@@ -40,6 +42,9 @@ body {
   border-bottom: 1px solid var(--line);
   background: rgba(0, 0, 0, 0.82);
   backdrop-filter: blur(5px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 .title {
   font-size: 28px;
@@ -76,6 +81,8 @@ select {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 18px clamp(12px, 3vw, 32px);
+  scroll-behavior: smooth;
+  min-height: 0;
 }
 
 .msg {
@@ -154,34 +161,104 @@ select {
 }
 
 .composer {
-  border-top: 1px solid var(--line);
-  padding: 12px clamp(12px, 3vw, 32px);
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px;
-  background: rgba(0, 0, 0, 0.88);
+  padding: 10px clamp(12px, 3vw, 32px) 14px;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.6) 100%);
+  border-top: none;
+}
+
+.composer-bubble {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 26px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  padding: 6px 16px 6px 18px;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset,
+    0 4px 24px rgba(0, 0, 0, 0.4),
+    0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.composer-bubble:focus-within {
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.06) inset,
+    0 4px 32px rgba(0, 0, 0, 0.5),
+    0 0 20px rgba(255, 255, 255, 0.03);
 }
 
 textarea {
   width: 100%;
-  resize: vertical;
-  min-height: 74px;
-  max-height: 220px;
-  padding: 10px;
-  border: 1px solid var(--line-strong);
-  background: #080808;
+  resize: none;
+  min-height: 24px;
+  max-height: 160px;
+  padding: 8px 0;
+  border: none;
+  background: transparent;
   color: var(--text);
-  border-radius: 10px;
+  border-radius: 0;
   font: inherit;
+  font-size: 15px;
+  line-height: 1.45;
+  outline: none;
 }
 
 textarea::placeholder {
-  color: #888888;
+  color: #666;
 }
 
 textarea:focus-visible {
-  outline: 2px solid #dddddd;
-  outline-offset: 1px;
+  outline: none;
+}
+
+#sendBtn {
+  flex-shrink: 0;
+  width: 46px;
+  height: 46px;
+  min-height: unset;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset,
+    0 2px 12px rgba(0, 0, 0, 0.3);
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+}
+
+#sendBtn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: scale(1.05);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08) inset,
+    0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+#sendBtn:active {
+  transform: scale(0.95);
+}
+
+#sendBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+  transform: none;
 }
 
 button {
@@ -223,10 +300,7 @@ button:disabled {
 }
 
 .kbd-hint {
-  font-size: 12px;
-  color: #666;
-  margin-top: 4px;
-  text-align: right;
+  display: none;
 }
 
 .tool-activity {
@@ -315,6 +389,33 @@ button:disabled {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* --- Word-by-word reveal --- */
+.word-group {
+  opacity: 0;
+  display: inline;
+  transition: opacity 0.55s ease-out;
+}
+
+.word-group.revealed {
+  opacity: 1;
+}
+
+/* --- Thinking content --- */
+.thinking-content {
+  margin-top: 8px;
+  margin-bottom: 8px;
+  border-color: #1a3a2a;
+  background: #010d06;
+}
+
+.thinking-content summary {
+  color: #6a9;
+}
+
+.thinking-content pre {
+  color: #8b8b8b;
+}
+
 /* --- Tool item slide-in --- */
 .tool-item {
   animation: toolSlideIn 0.3s ease-out;
@@ -355,15 +456,7 @@ button:disabled {
     width: 100%;
   }
 
-  .composer {
-    grid-template-columns: 1fr;
-  }
-
   button {
     height: 42px;
-  }
-
-  textarea {
-    min-height: 56px;
   }
 }

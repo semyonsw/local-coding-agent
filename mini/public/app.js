@@ -16,6 +16,10 @@ const statusEl = document.getElementById("status");
 const modelSelectEl = document.getElementById("modelSelect");
 const modelMetaEl = document.getElementById("modelMeta");
 
+function smoothScrollToBottom() {
+  chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' });
+}
+
 window.addEventListener("error", (e) => {
   statusEl.textContent = "Client error: " + e.message;
 });
@@ -54,6 +58,89 @@ function renderMarkdown(text) {
   );
 
   return html;
+}
+
+// ---------------------------------------------------------------------------
+// Word-by-word reveal animation
+// ---------------------------------------------------------------------------
+function revealWordsProgressively(containerEl, onProgress) {
+  const WORDS_PER_GROUP = 7;
+  const INTERVAL_MS = 80;
+
+  // Collect text nodes outside <pre> blocks
+  const textNodes = [];
+  const walker = document.createTreeWalker(
+    containerEl,
+    NodeFilter.SHOW_TEXT,
+    null
+  );
+  let node;
+  while ((node = walker.nextNode())) {
+    if (node.parentElement && node.parentElement.closest("pre")) continue;
+    if (node.textContent.trim().length === 0) continue;
+    textNodes.push(node);
+  }
+
+  // Split text nodes into word-group spans
+  const wordGroups = [];
+
+  for (const textNode of textNodes) {
+    const words = textNode.textContent.split(/(\s+)/);
+    const parent = textNode.parentNode;
+    const fragment = document.createDocumentFragment();
+
+    let wordCount = 0;
+    let currentSpan = document.createElement("span");
+    currentSpan.className = "word-group";
+
+    for (const token of words) {
+      if (/^\s+$/.test(token)) {
+        currentSpan.appendChild(document.createTextNode(token));
+      } else if (token.length > 0) {
+        currentSpan.appendChild(document.createTextNode(token));
+        wordCount++;
+        if (wordCount >= WORDS_PER_GROUP) {
+          wordGroups.push(currentSpan);
+          fragment.appendChild(currentSpan);
+          currentSpan = document.createElement("span");
+          currentSpan.className = "word-group";
+          wordCount = 0;
+        }
+      }
+    }
+
+    if (currentSpan.childNodes.length > 0) {
+      wordGroups.push(currentSpan);
+      fragment.appendChild(currentSpan);
+    }
+
+    parent.replaceChild(fragment, textNode);
+  }
+
+  // Progressively reveal
+  let groupIndex = 0;
+
+  function revealNext() {
+    if (groupIndex >= wordGroups.length) {
+      if (typeof onProgress === "function") onProgress(true);
+      return;
+    }
+
+    wordGroups[groupIndex].classList.add("revealed");
+    groupIndex++;
+
+    if (typeof onProgress === "function") onProgress(false);
+    requestAnimationFrame(function () {
+      setTimeout(revealNext, INTERVAL_MS);
+    });
+  }
+
+  if (wordGroups.length === 0) {
+    if (typeof onProgress === "function") onProgress(true);
+    return;
+  }
+
+  requestAnimationFrame(revealNext);
 }
 
 // ---------------------------------------------------------------------------
@@ -175,9 +262,6 @@ function addMessage(kind, text, events) {
 
     const detailsEl = document.createElement("details");
     detailsEl.className = "events";
-    if (hasFailure) {
-      detailsEl.open = true;
-    }
 
     const summaryEl = document.createElement("summary");
     summaryEl.textContent = hasFailure
@@ -193,7 +277,7 @@ function addMessage(kind, text, events) {
   }
 
   chat.appendChild(div);
-  chat.scrollTop = chat.scrollHeight;
+  smoothScrollToBottom();
 }
 
 // ---------------------------------------------------------------------------
@@ -216,6 +300,7 @@ async function sendPrompt() {
 
   addMessage("user", message);
   promptEl.value = "";
+  promptEl.style.height = "auto";
   sendBtn.disabled = true;
   statusEl.textContent = "Thinking...";
 
@@ -243,7 +328,7 @@ async function sendPrompt() {
   msgDiv.appendChild(activityEl);
   msgDiv.appendChild(thinkingEl);
   chat.appendChild(msgDiv);
-  chat.scrollTop = chat.scrollHeight;
+  smoothScrollToBottom();
 
   const collectedEvents = [];
   const toolItems = new Map(); // name -> DOM element
@@ -294,7 +379,7 @@ async function sendPrompt() {
             item.innerHTML = '<span class="spinner"></span> ' + event.name + "...";
             activityEl.appendChild(item);
             toolItems.set(event.name + "_" + collectedEvents.length, item);
-            chat.scrollTop = chat.scrollHeight;
+            smoothScrollToBottom();
             continue;
           }
 
@@ -312,15 +397,31 @@ async function sendPrompt() {
                 }
               }
             }
-            chat.scrollTop = chat.scrollHeight;
+            smoothScrollToBottom();
+            continue;
+          }
+
+          if (event.type === "thinking") {
+            if (thinkingEl.parentNode) thinkingEl.remove();
+            var thinkingDetails = document.createElement("details");
+            thinkingDetails.className = "events thinking-content";
+            var thinkingSummary = document.createElement("summary");
+            thinkingSummary.textContent = "Thinking";
+            var thinkingPre = document.createElement("pre");
+            thinkingPre.textContent = event.text;
+            thinkingDetails.appendChild(thinkingSummary);
+            thinkingDetails.appendChild(thinkingPre);
+            msgDiv.insertBefore(thinkingDetails, bodyEl);
+            smoothScrollToBottom();
             continue;
           }
 
           if (event.type === "text") {
-            thinkingEl.remove();
+            if (thinkingEl.parentNode) thinkingEl.remove();
             bodyEl.innerHTML = renderMarkdown(event.text || "");
-            bodyEl.classList.add("animate-in");
-            chat.scrollTop = chat.scrollHeight;
+            revealWordsProgressively(bodyEl, function () {
+              smoothScrollToBottom();
+            });
             continue;
           }
 
@@ -338,7 +439,7 @@ async function sendPrompt() {
     }
 
     // Remove thinking indicator
-    thinkingEl.remove();
+    if (thinkingEl.parentNode) thinkingEl.remove();
 
     // Convert live tool activity into the collapsible details accordion
     if (collectedEvents.length > 0) {
@@ -348,7 +449,6 @@ async function sendPrompt() {
       );
       const detailsEl = document.createElement("details");
       detailsEl.className = "events";
-      if (hasFailure) detailsEl.open = true;
       const summaryEl = document.createElement("summary");
       summaryEl.textContent = hasFailure
         ? "Tool activity (attention needed)"
@@ -363,7 +463,7 @@ async function sendPrompt() {
     }
   } catch (error) {
     bodyEl.textContent = "Error: " + error.message;
-    thinkingEl.remove();
+    if (thinkingEl.parentNode) thinkingEl.remove();
     activityEl.remove();
     statusEl.textContent = "Error";
   } finally {
@@ -419,8 +519,15 @@ modelSelectEl.addEventListener("change", (event) => {
 });
 promptEl.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+    e.preventDefault();
     sendPrompt();
   }
+});
+
+// Auto-resize textarea to fit content
+promptEl.addEventListener("input", () => {
+  promptEl.style.height = "auto";
+  promptEl.style.height = Math.min(promptEl.scrollHeight, 160) + "px";
 });
 
 loadModels();

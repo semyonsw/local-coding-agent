@@ -23,6 +23,7 @@ async function postGenerateContent({
   temperature = 0.2,
   maxOutputTokens = 8192,
   retryCount = 3,
+  thinkingBudget,
 }) {
   const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent`;
 
@@ -33,6 +34,12 @@ async function postGenerateContent({
       maxOutputTokens,
     },
   };
+
+  if (typeof thinkingBudget === "number" && thinkingBudget > 0) {
+    body.generationConfig.thinkingConfig = {
+      thinkingBudget: thinkingBudget,
+    };
+  }
 
   if (systemInstruction) {
     body.systemInstruction = {
@@ -96,11 +103,16 @@ function parseModelTurn(payload) {
   const parts = Array.isArray(content?.parts) ? content.parts : [];
 
   const textParts = [];
+  const thinkingParts = [];
   const functionCalls = [];
 
   for (const part of parts) {
     if (typeof part?.text === "string") {
-      textParts.push(part.text);
+      if (part.thought === true) {
+        thinkingParts.push(part.text);
+      } else {
+        textParts.push(part.text);
+      }
     }
     if (part?.functionCall?.name) {
       functionCalls.push({
@@ -117,6 +129,7 @@ function parseModelTurn(payload) {
     role: content?.role || "model",
     parts,
     text: textParts.join("\n").trim(),
+    thinking: thinkingParts.join("\n").trim(),
     functionCalls,
     finishReason: candidate?.finishReason || null,
   };

@@ -24,11 +24,10 @@
 
       <div id="chat" class="chat"></div>
       <div class="composer">
-        <div>
-          <textarea id="prompt" placeholder="Ask about code, request file edits, or run repo commands..."></textarea>
-          <div class="kbd-hint">Ctrl+Enter to send</div>
+        <div class="composer-bubble">
+          <textarea id="prompt" rows="1" placeholder="Ask about code, request file edits, or run repo commands..."></textarea>
         </div>
-        <button id="sendBtn" type="button">Send</button>
+        <button id="sendBtn" type="button" title="Send (Ctrl+Enter)">&#x2191;</button>
       </div>
       <div id="status" class="status">Ready.</div>
     </div>

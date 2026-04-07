@@ -2310,20 +2310,20 @@ function generateHtmlReport(
     .friction-desc { font-size: 13px; color: #7f1d1d; margin-bottom: 10px; }
     .friction-examples { margin: 0 0 0 20px; font-size: 13px; color: #334155; }
     .friction-examples li { margin-bottom: 4px; }
-    .claude-md-section { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 16px; margin-bottom: 20px; }
-    .claude-md-section h3 { font-size: 14px; font-weight: 600; color: #1e40af; margin: 0 0 12px 0; }
-    .claude-md-actions { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #dbeafe; }
-    .copy-all-btn { background: #2563eb; color: white; border: none; border-radius: 4px; padding: 6px 12px; font-size: 12px; cursor: pointer; font-weight: 500; transition: all 0.2s; }
-    .copy-all-btn:hover { background: #1d4ed8; }
+    .claude-md-section { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px; margin-bottom: 20px; }
+    .claude-md-section h3 { font-size: 14px; font-weight: 600; color: #166534; margin: 0 0 12px 0; }
+    .claude-md-actions { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #dcfce7; }
+    .copy-all-btn { background: #16a34a; color: white; border: none; border-radius: 4px; padding: 6px 12px; font-size: 12px; cursor: pointer; font-weight: 500; transition: all 0.2s; }
+    .copy-all-btn:hover { background: #15803d; }
     .copy-all-btn.copied { background: #16a34a; }
-    .claude-md-item { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; padding: 10px 0; border-bottom: 1px solid #dbeafe; }
+    .claude-md-item { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; padding: 10px 0; border-bottom: 1px solid #dcfce7; }
     .claude-md-item:last-child { border-bottom: none; }
     .cmd-checkbox { margin-top: 2px; }
-    .cmd-code { background: white; padding: 8px 12px; border-radius: 4px; font-size: 12px; color: #1e40af; border: 1px solid #bfdbfe; font-family: monospace; display: block; white-space: pre-wrap; word-break: break-word; flex: 1; }
+    .cmd-code { background: white; padding: 8px 12px; border-radius: 4px; font-size: 12px; color: #166534; border: 1px solid #bbf7d0; font-family: monospace; display: block; white-space: pre-wrap; word-break: break-word; flex: 1; }
     .cmd-why { font-size: 12px; color: #64748b; width: 100%; padding-left: 24px; margin-top: 4px; }
     .features-section, .patterns-section { display: flex; flex-direction: column; gap: 12px; margin: 16px 0; }
     .feature-card { background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 16px; }
-    .pattern-card { background: #f0f9ff; border: 1px solid #7dd3fc; border-radius: 8px; padding: 16px; }
+    .pattern-card { background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 16px; }
     .feature-title, .pattern-title { font-weight: 600; font-size: 15px; color: #0f172a; margin-bottom: 6px; }
     .feature-oneliner { font-size: 14px; color: #475569; margin-bottom: 8px; }
     .pattern-summary { font-size: 14px; color: #475569; margin-bottom: 8px; }
@@ -2363,7 +2363,7 @@ function generateHtmlReport(
     .feedback-section { margin-top: 16px; }
     .feedback-section h3 { font-size: 14px; font-weight: 600; color: #475569; margin-bottom: 12px; }
     .feedback-card { background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
-    .feedback-card.team-card { background: #eff6ff; border-color: #bfdbfe; }
+    .feedback-card.team-card { background: #f0fdf4; border-color: #bbf7d0; }
     .feedback-card.model-card { background: #faf5ff; border-color: #e9d5ff; }
     .feedback-title { font-weight: 600; font-size: 14px; color: #0f172a; margin-bottom: 6px; }
     .feedback-detail { font-size: 13px; color: #475569; line-height: 1.5; }
@@ -2520,7 +2520,7 @@ function generateHtmlReport(
     <div class="charts-row">
       <div class="chart-card">
         <div class="chart-title">What You Wanted</div>
-        ${generateBarChart(data.goal_categories, '#2563eb')}
+        ${generateBarChart(data.goal_categories, '#16a34a')}
       </div>
       <div class="chart-card">
         <div class="chart-title">Top Tools Used</div>

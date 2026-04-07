@@ -75,7 +75,7 @@ const ONBOARDING_PROMPT_LIBRARY = [
   "Find where markdown rendering happens in the chat and note any sanitization risks.",
   "Run a quick security pass for file-write operations and summarize safeguards.",
   "Generate a short changelog entry for today's UI updates in CHANGELOG.md.",
-  "Search for accent-color and propose a cohesive blue palette for this dark theme.",
+  "Search for accent-color and propose a cohesive green palette for this dark theme.",
   "Find all onboarding strings and prepare them for future i18n extraction.",
   "Create a minimal reproduction note for any bug found in new session reset behavior.",
   "Trace how sessionId is created, stored, and reused across requests.",

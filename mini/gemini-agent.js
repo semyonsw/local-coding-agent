@@ -14,11 +14,16 @@ function createGeminiAgent(config) {
     rootDir,
     apiKey,
     model,
+    temperature = 0.2,
+    topP = 0.95,
+    topK = 40,
     maxTurns = 10,
     maxToolCalls = 20,
     commandTimeoutMs = 15000,
     maxOutputTokens = 8192,
+    thinkingMode = "adaptive",
     thinkingBudget = 0,
+    systemPrompt = "",
     allowOutsideRoot = false,
     logger = noopLogger(),
   } = config;
@@ -27,7 +32,7 @@ function createGeminiAgent(config) {
     throw new Error("createGeminiAgent missing required config fields");
   }
 
-  const systemInstruction = [
+  const baseSystemInstruction = [
     "You are a coding agent running in a local workspace.",
     "Use tools when needed for grounding, then return concise actionable answers.",
     "Prefer reading before writing. Explain file changes clearly.",
@@ -35,10 +40,72 @@ function createGeminiAgent(config) {
     "When using run_command, avoid destructive operations.",
   ].join(" ");
 
-  async function sendMessage(session, userMessage, onEvent) {
+  function buildSystemInstruction(customSystemPrompt) {
+    const prompt = String(customSystemPrompt || "").trim();
+    if (!prompt) {
+      return baseSystemInstruction;
+    }
+    return `${baseSystemInstruction}\n\nCustom system prompt:\n${prompt}`;
+  }
+
+  async function sendMessage(
+    session,
+    userMessage,
+    onEvent,
+    runtimeOverrides = {},
+  ) {
     const events = [];
     const emit = typeof onEvent === "function" ? onEvent : () => {};
     const startedAt = Date.now();
+    const effectiveModel =
+      typeof runtimeOverrides.model === "string" &&
+      runtimeOverrides.model.trim()
+        ? runtimeOverrides.model.trim()
+        : model;
+    const effectiveTemperature =
+      typeof runtimeOverrides.temperature === "number"
+        ? runtimeOverrides.temperature
+        : temperature;
+    const effectiveTopP =
+      typeof runtimeOverrides.topP === "number" ? runtimeOverrides.topP : topP;
+    const effectiveTopK =
+      typeof runtimeOverrides.topK === "number" ? runtimeOverrides.topK : topK;
+    const effectiveMaxTurns =
+      Number.isInteger(runtimeOverrides.maxTurns) &&
+      runtimeOverrides.maxTurns > 0
+        ? runtimeOverrides.maxTurns
+        : maxTurns;
+    const effectiveMaxToolCalls =
+      Number.isInteger(runtimeOverrides.maxToolCalls) &&
+      runtimeOverrides.maxToolCalls > 0
+        ? runtimeOverrides.maxToolCalls
+        : maxToolCalls;
+    const effectiveCommandTimeoutMs =
+      Number.isInteger(runtimeOverrides.commandTimeoutMs) &&
+      runtimeOverrides.commandTimeoutMs > 0
+        ? runtimeOverrides.commandTimeoutMs
+        : commandTimeoutMs;
+    const effectiveMaxOutputTokens =
+      Number.isInteger(runtimeOverrides.maxOutputTokens) &&
+      runtimeOverrides.maxOutputTokens > 0
+        ? runtimeOverrides.maxOutputTokens
+        : maxOutputTokens;
+    const effectiveThinkingBudget =
+      typeof runtimeOverrides.thinkingBudget === "number"
+        ? runtimeOverrides.thinkingBudget
+        : thinkingBudget;
+    const effectiveThinkingMode =
+      typeof runtimeOverrides.thinkingMode === "string"
+        ? runtimeOverrides.thinkingMode
+        : thinkingMode;
+    const effectiveAllowOutsideRoot =
+      typeof runtimeOverrides.allowOutsideRoot === "boolean"
+        ? runtimeOverrides.allowOutsideRoot
+        : allowOutsideRoot;
+    const effectiveSystemPrompt =
+      typeof runtimeOverrides.systemPrompt === "string"
+        ? runtimeOverrides.systemPrompt
+        : systemPrompt;
 
     if (!session.currentDir) {
       session.currentDir = rootDir;
@@ -48,6 +115,7 @@ function createGeminiAgent(config) {
       sessionId: session.id,
       userMessage,
       totalToolCallsSoFar: session.totalToolCalls,
+      model: effectiveModel,
     });
 
     session.contents.push({
@@ -57,7 +125,7 @@ function createGeminiAgent(config) {
 
     let finalText = "";
 
-    for (let turn = 0; turn < maxTurns; turn += 1) {
+    for (let turn = 0; turn < effectiveMaxTurns; turn += 1) {
       logger.debug("agent_turn_start", {
         sessionId: session.id,
         turn,
@@ -65,12 +133,16 @@ function createGeminiAgent(config) {
 
       const payload = await postGenerateContent({
         apiKey,
-        model,
+        model: effectiveModel,
         contents: session.contents,
-        systemInstruction,
+        systemInstruction: buildSystemInstruction(effectiveSystemPrompt),
         functionDeclarations: TOOL_DECLARATIONS,
-        maxOutputTokens,
-        thinkingBudget,
+        temperature: effectiveTemperature,
+        topP: effectiveTopP,
+        topK: effectiveTopK,
+        maxOutputTokens: effectiveMaxOutputTokens,
+        thinkingMode: effectiveThinkingMode,
+        thinkingBudget: effectiveThinkingBudget,
       });
 
       const parsed = parseModelTurn(payload);
@@ -99,21 +171,30 @@ function createGeminiAgent(config) {
           events,
           finishReason: parsed.finishReason,
         };
-        emit({ type: "done", finishReason: parsed.finishReason, sessionId: session.id });
+        emit({
+          type: "done",
+          finishReason: parsed.finishReason,
+          sessionId: session.id,
+        });
         return result;
       }
 
       for (const call of parsed.functionCalls) {
-        if (session.totalToolCalls >= maxToolCalls) {
-          const budgetMsg = "Stopped because tool-call budget was reached. Ask me to continue if you want another pass.";
+        if (session.totalToolCalls >= effectiveMaxToolCalls) {
+          const budgetMsg =
+            "Stopped because tool-call budget was reached. Ask me to continue if you want another pass.";
           emit({ type: "text", text: budgetMsg });
           logger.warn("agent_tool_budget_reached", {
             sessionId: session.id,
             totalToolCalls: session.totalToolCalls,
-            maxToolCalls,
+            maxToolCalls: effectiveMaxToolCalls,
             durationMs: Date.now() - startedAt,
           });
-          emit({ type: "done", finishReason: "tool_call_budget", sessionId: session.id });
+          emit({
+            type: "done",
+            finishReason: "tool_call_budget",
+            sessionId: session.id,
+          });
           return {
             sessionId: session.id,
             reply: budgetMsg,
@@ -140,8 +221,8 @@ function createGeminiAgent(config) {
           rootDir,
           { name: call.name, args: call.args },
           {
-            commandTimeoutMs,
-            allowOutsideRoot,
+            commandTimeoutMs: effectiveCommandTimeoutMs,
+            allowOutsideRoot: effectiveAllowOutsideRoot,
             currentDir: session.currentDir,
             logger,
           },
@@ -191,7 +272,8 @@ function createGeminiAgent(config) {
       }
     }
 
-    const maxTurnsMsg = "Stopped because max model turns were reached. Ask me to continue if needed.";
+    const maxTurnsMsg =
+      "Stopped because max model turns were reached. Ask me to continue if needed.";
     emit({ type: "text", text: maxTurnsMsg });
     logger.warn("agent_message_end", {
       sessionId: session.id,

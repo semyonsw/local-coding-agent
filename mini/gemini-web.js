@@ -5,7 +5,11 @@ const crypto = require("crypto");
 const { getGeminiRuntimeConfig } = require("./gemini-env");
 const { createGeminiAgent } = require("./gemini-agent");
 const { createLogger } = require("./gemini-logger");
-const { saveSession, loadAllSessions, deleteSession } = require("./gemini-sessions");
+const {
+  saveSession,
+  loadAllSessions,
+  deleteSession,
+} = require("./gemini-sessions");
 
 const ALLOWED_MODELS = [
   "gemini-3-pro-preview",
@@ -57,7 +61,10 @@ let cachedStyleCss = null;
 let cachedAppJs = null;
 
 function loadStaticFiles() {
-  cachedIndexHtml = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8");
+  cachedIndexHtml = fs.readFileSync(
+    path.join(PUBLIC_DIR, "index.html"),
+    "utf8",
+  );
   cachedStyleCss = fs.readFileSync(path.join(PUBLIC_DIR, "style.css"), "utf8");
   cachedAppJs = fs.readFileSync(path.join(PUBLIC_DIR, "app.js"), "utf8");
 }
@@ -82,6 +89,17 @@ const SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour
 const SESSION_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
 const RATE_LIMIT_MAX_REQUESTS = 30; // per window per IP
+const THINKING_MODES = ["adaptive", "enabled", "disabled"];
+const SETTINGS_BOUNDS = {
+  temperature: { min: 0, max: 2 },
+  topP: { min: 0, max: 1 },
+  topK: { min: 1, max: 200 },
+  maxOutputTokens: { min: 256, max: 65536 },
+  thinkingBudget: { min: 0, max: 32768 },
+  maxTurns: { min: 1, max: 200 },
+  maxToolCalls: { min: 1, max: 200 },
+  commandTimeoutMs: { min: 1000, max: 60000 },
+};
 
 // Simple in-memory token bucket rate limiter
 const rateBuckets = new Map();
@@ -103,6 +121,181 @@ function setCorsHeaders(res, port) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 }
 
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function coerceNumber(value, fieldName) {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error(`${fieldName} must be a finite number`);
+    }
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      throw new Error(`${fieldName} must be a finite number`);
+    }
+    return parsed;
+  }
+  throw new Error(`${fieldName} must be a number`);
+}
+
+function coerceBoolean(value, fieldName) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) return true;
+    if (["false", "0", "no", "off"].includes(normalized)) return false;
+  }
+  throw new Error(`${fieldName} must be a boolean`);
+}
+
+function buildDefaultSettings(runtime, allowedModels) {
+  const fallbackModel = "gemini-3-flash-preview";
+  const selectedModel = allowedModels.includes(runtime.model)
+    ? runtime.model
+    : fallbackModel;
+  return {
+    model: selectedModel,
+    temperature: runtime.temperature,
+    topP: runtime.topP,
+    topK: runtime.topK,
+    maxOutputTokens: runtime.maxOutputTokens,
+    thinkingMode: runtime.thinkingMode,
+    thinkingBudget: runtime.thinkingBudget,
+    systemPrompt: runtime.systemPrompt,
+    maxTurns: runtime.maxTurns,
+    maxToolCalls: runtime.maxToolCalls,
+    commandTimeoutMs: runtime.commandTimeoutMs,
+    allowOutsideRoot: runtime.allowOutsideRoot,
+  };
+}
+
+function normalizeSettingsUpdate(currentSettings, patch, allowedModels) {
+  const next = { ...currentSettings };
+  if (!patch || typeof patch !== "object") {
+    return next;
+  }
+
+  if (patch.model !== undefined) {
+    if (typeof patch.model !== "string") {
+      throw new Error("model must be a string");
+    }
+    const model = patch.model.trim();
+    if (!allowedModels.includes(model)) {
+      throw new Error("model must be one of the allowed Gemini options");
+    }
+    next.model = model;
+  }
+
+  if (patch.temperature !== undefined) {
+    next.temperature = clamp(
+      coerceNumber(patch.temperature, "temperature"),
+      SETTINGS_BOUNDS.temperature.min,
+      SETTINGS_BOUNDS.temperature.max,
+    );
+  }
+
+  if (patch.topP !== undefined) {
+    next.topP = clamp(
+      coerceNumber(patch.topP, "topP"),
+      SETTINGS_BOUNDS.topP.min,
+      SETTINGS_BOUNDS.topP.max,
+    );
+  }
+
+  if (patch.topK !== undefined) {
+    next.topK = Math.round(
+      clamp(
+        coerceNumber(patch.topK, "topK"),
+        SETTINGS_BOUNDS.topK.min,
+        SETTINGS_BOUNDS.topK.max,
+      ),
+    );
+  }
+
+  if (patch.maxOutputTokens !== undefined) {
+    next.maxOutputTokens = Math.round(
+      clamp(
+        coerceNumber(patch.maxOutputTokens, "maxOutputTokens"),
+        SETTINGS_BOUNDS.maxOutputTokens.min,
+        SETTINGS_BOUNDS.maxOutputTokens.max,
+      ),
+    );
+  }
+
+  if (patch.thinkingMode !== undefined) {
+    if (typeof patch.thinkingMode !== "string") {
+      throw new Error("thinkingMode must be a string");
+    }
+    const normalizedMode = patch.thinkingMode.trim().toLowerCase();
+    if (!THINKING_MODES.includes(normalizedMode)) {
+      throw new Error("thinkingMode must be adaptive, enabled, or disabled");
+    }
+    next.thinkingMode = normalizedMode;
+  }
+
+  if (patch.thinkingBudget !== undefined) {
+    next.thinkingBudget = Math.round(
+      clamp(
+        coerceNumber(patch.thinkingBudget, "thinkingBudget"),
+        SETTINGS_BOUNDS.thinkingBudget.min,
+        SETTINGS_BOUNDS.thinkingBudget.max,
+      ),
+    );
+  }
+
+  if (patch.systemPrompt !== undefined) {
+    if (typeof patch.systemPrompt !== "string") {
+      throw new Error("systemPrompt must be a string");
+    }
+    next.systemPrompt = patch.systemPrompt.slice(0, 12000);
+  }
+
+  if (patch.maxTurns !== undefined) {
+    next.maxTurns = Math.round(
+      clamp(
+        coerceNumber(patch.maxTurns, "maxTurns"),
+        SETTINGS_BOUNDS.maxTurns.min,
+        SETTINGS_BOUNDS.maxTurns.max,
+      ),
+    );
+  }
+
+  if (patch.maxToolCalls !== undefined) {
+    next.maxToolCalls = Math.round(
+      clamp(
+        coerceNumber(patch.maxToolCalls, "maxToolCalls"),
+        SETTINGS_BOUNDS.maxToolCalls.min,
+        SETTINGS_BOUNDS.maxToolCalls.max,
+      ),
+    );
+  }
+
+  if (patch.commandTimeoutMs !== undefined) {
+    next.commandTimeoutMs = Math.round(
+      clamp(
+        coerceNumber(patch.commandTimeoutMs, "commandTimeoutMs"),
+        SETTINGS_BOUNDS.commandTimeoutMs.min,
+        SETTINGS_BOUNDS.commandTimeoutMs.max,
+      ),
+    );
+  }
+
+  if (patch.allowOutsideRoot !== undefined) {
+    next.allowOutsideRoot = coerceBoolean(
+      patch.allowOutsideRoot,
+      "allowOutsideRoot",
+    );
+  }
+
+  return next;
+}
+
 async function startGeminiWebServer(options = {}) {
   const rootDir = options.rootDir || path.resolve(__dirname, "..");
   const runtime = getGeminiRuntimeConfig({
@@ -121,41 +314,33 @@ async function startGeminiWebServer(options = {}) {
   // Generate auth token for this server instance
   const authToken = crypto.randomBytes(32).toString("hex");
 
-  const fallbackModel = "gemini-3-flash-preview";
-  let currentModel = ALLOWED_MODELS.includes(runtime.model)
-    ? runtime.model
-    : fallbackModel;
+  const defaultSettings = buildDefaultSettings(runtime, ALLOWED_MODELS);
+  let currentSettings = { ...defaultSettings };
 
-  if (currentModel !== runtime.model) {
+  if (currentSettings.model !== runtime.model) {
     serverLogger.warn("unsupported_startup_model", {
       requestedModel: runtime.model,
-      fallbackModel,
+      fallbackModel: currentSettings.model,
       allowedModels: ALLOWED_MODELS,
     });
   }
 
-  let agent = createGeminiAgent({
+  const agent = createGeminiAgent({
     rootDir,
     apiKey: runtime.apiKey,
-    model: currentModel,
-    maxTurns: runtime.maxTurns,
-    maxToolCalls: runtime.maxToolCalls,
-    commandTimeoutMs: runtime.commandTimeoutMs,
-    maxOutputTokens: runtime.maxOutputTokens,
-    thinkingBudget: runtime.thinkingBudget,
-    allowOutsideRoot: runtime.allowOutsideRoot,
+    ...currentSettings,
     logger: logger.child({ component: "agent" }),
   });
 
   serverLogger.info("server_boot", {
     rootDir,
-    model: currentModel,
+    model: currentSettings.model,
     port: runtime.port,
-    maxTurns: runtime.maxTurns,
-    maxToolCalls: runtime.maxToolCalls,
-    commandTimeoutMs: runtime.commandTimeoutMs,
+    maxTurns: currentSettings.maxTurns,
+    maxToolCalls: currentSettings.maxToolCalls,
+    commandTimeoutMs: currentSettings.commandTimeoutMs,
     allowedModels: ALLOWED_MODELS,
-    allowOutsideRoot: runtime.allowOutsideRoot,
+    allowOutsideRoot: currentSettings.allowOutsideRoot,
     logFile: logger.getLogFilePath(),
   });
 
@@ -176,7 +361,10 @@ async function startGeminiWebServer(options = {}) {
     }
   }
 
-  const cleanupTimer = setInterval(evictStaleSessions, SESSION_CLEANUP_INTERVAL_MS);
+  const cleanupTimer = setInterval(
+    evictStaleSessions,
+    SESSION_CLEANUP_INTERVAL_MS,
+  );
   cleanupTimer.unref();
 
   function getOrCreateSession(requestedId) {
@@ -268,7 +456,7 @@ async function startGeminiWebServer(options = {}) {
 
       if (req.method === "GET" && url === "/") {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        res.end(buildHtml(currentModel, ALLOWED_MODELS, authToken));
+        res.end(buildHtml(currentSettings.model, ALLOWED_MODELS, authToken));
         reqLogger.info("http_request_end", { status: 200 });
         return;
       }
@@ -277,7 +465,8 @@ async function startGeminiWebServer(options = {}) {
       if (req.method === "GET" && (url === "/style.css" || url === "/app.js")) {
         if (!cachedStyleCss) loadStaticFiles();
         const ext = path.extname(url);
-        const contentType = STATIC_CONTENT_TYPES[ext] || "application/octet-stream";
+        const contentType =
+          STATIC_CONTENT_TYPES[ext] || "application/octet-stream";
         const content = url === "/style.css" ? cachedStyleCss : cachedAppJs;
         res.writeHead(200, { "content-type": contentType });
         res.end(content);
@@ -288,10 +477,11 @@ async function startGeminiWebServer(options = {}) {
       if (req.method === "GET" && url === "/api/health") {
         sendJson(res, 200, {
           ok: true,
-          model: currentModel,
-          maxTurns: runtime.maxTurns,
-          maxToolCalls: runtime.maxToolCalls,
-          commandTimeoutMs: runtime.commandTimeoutMs,
+          model: currentSettings.model,
+          maxTurns: currentSettings.maxTurns,
+          maxToolCalls: currentSettings.maxToolCalls,
+          commandTimeoutMs: currentSettings.commandTimeoutMs,
+          settings: currentSettings,
           allowedModels: ALLOWED_MODELS,
         });
         reqLogger.info("http_request_end", { status: 200, route: "health" });
@@ -300,17 +490,69 @@ async function startGeminiWebServer(options = {}) {
 
       if (req.method === "GET" && url === "/api/models") {
         sendJson(res, 200, {
-          model: currentModel,
+          model: currentSettings.model,
           models: ALLOWED_MODELS,
         });
         reqLogger.info("http_request_end", { status: 200, route: "models" });
         return;
       }
 
+      if (req.method === "GET" && url === "/api/settings") {
+        sendJson(res, 200, {
+          settings: currentSettings,
+          defaults: defaultSettings,
+          allowedModels: ALLOWED_MODELS,
+          thinkingModes: THINKING_MODES,
+        });
+        reqLogger.info("http_request_end", { status: 200, route: "settings" });
+        return;
+      }
+
+      if (req.method === "POST" && url === "/api/settings") {
+        const body = await readJsonBody(req);
+        try {
+          if (body && body.resetToDefaults === true) {
+            currentSettings = { ...defaultSettings };
+          } else {
+            const patch =
+              body && body.settings && typeof body.settings === "object"
+                ? body.settings
+                : body;
+            currentSettings = normalizeSettingsUpdate(
+              currentSettings,
+              patch,
+              ALLOWED_MODELS,
+            );
+          }
+        } catch (error) {
+          sendJson(res, 400, {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          reqLogger.warn("http_request_end", {
+            status: 400,
+            route: "settings",
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return;
+        }
+
+        sendJson(res, 200, {
+          ok: true,
+          settings: currentSettings,
+          defaults: defaultSettings,
+          allowedModels: ALLOWED_MODELS,
+          thinkingModes: THINKING_MODES,
+        });
+        reqLogger.info("http_request_end", { status: 200, route: "settings" });
+        return;
+      }
+
       if (req.method === "GET" && url === "/api/sessions") {
         const list = [];
         for (const [, s] of sessions) {
-          const messageCount = s.contents.filter((c) => c.role === "user").length;
+          const messageCount = s.contents.filter(
+            (c) => c.role === "user",
+          ).length;
           list.push({
             id: s.id,
             createdAt: s.createdAt,
@@ -324,18 +566,32 @@ async function startGeminiWebServer(options = {}) {
         return;
       }
 
-      if (req.method === "GET" && url.startsWith("/api/sessions/") && url.endsWith("/export")) {
+      if (
+        req.method === "GET" &&
+        url.startsWith("/api/sessions/") &&
+        url.endsWith("/export")
+      ) {
         const exportId = url.slice("/api/sessions/".length, -"/export".length);
         const exportSession = sessions.get(exportId);
         if (!exportSession) {
           sendJson(res, 404, { error: "Session not found" });
-          reqLogger.warn("http_request_end", { status: 404, route: "session_export" });
+          reqLogger.warn("http_request_end", {
+            status: 404,
+            route: "session_export",
+          });
           return;
         }
         const messages = exportSession.contents.map((c) => ({
           role: c.role,
           text: c.parts
-            .map((p) => p.text || (p.functionCall ? `[tool: ${p.functionCall.name}]` : "") || (p.functionResponse ? `[result: ${p.functionResponse.name}]` : ""))
+            .map(
+              (p) =>
+                p.text ||
+                (p.functionCall ? `[tool: ${p.functionCall.name}]` : "") ||
+                (p.functionResponse
+                  ? `[result: ${p.functionResponse.name}]`
+                  : ""),
+            )
             .join("\n"),
         }));
         sendJson(res, 200, {
@@ -344,7 +600,10 @@ async function startGeminiWebServer(options = {}) {
           messages,
           exportedAt: new Date().toISOString(),
         });
-        reqLogger.info("http_request_end", { status: 200, route: "session_export" });
+        reqLogger.info("http_request_end", {
+          status: 200,
+          route: "session_export",
+        });
         return;
       }
 
@@ -366,30 +625,21 @@ async function startGeminiWebServer(options = {}) {
           return;
         }
 
-        if (requestedModel !== currentModel) {
-          currentModel = requestedModel;
-          agent = createGeminiAgent({
-            rootDir,
-            apiKey: runtime.apiKey,
-            model: currentModel,
-            maxTurns: runtime.maxTurns,
-            maxToolCalls: runtime.maxToolCalls,
-            commandTimeoutMs: runtime.commandTimeoutMs,
-            maxOutputTokens: runtime.maxOutputTokens,
-            thinkingBudget: runtime.thinkingBudget,
-            allowOutsideRoot: runtime.allowOutsideRoot,
-            logger: logger.child({ component: "agent" }),
-          });
-
+        if (requestedModel !== currentSettings.model) {
+          currentSettings = {
+            ...currentSettings,
+            model: requestedModel,
+          };
           reqLogger.info("model_switched", {
-            model: currentModel,
+            model: currentSettings.model,
           });
         }
 
         sendJson(res, 200, {
           ok: true,
-          model: currentModel,
+          model: currentSettings.model,
           models: ALLOWED_MODELS,
+          settings: currentSettings,
         });
         reqLogger.info("http_request_end", { status: 200, route: "model" });
         return;
@@ -415,13 +665,18 @@ async function startGeminiWebServer(options = {}) {
           sessionId: session.id,
           messageLength: message.length,
         });
-        const result = await agent.sendMessage(session, message);
+        const result = await agent.sendMessage(
+          session,
+          message,
+          undefined,
+          currentSettings,
+        );
         saveSession(sessionsDir, session).catch(() => {});
 
         sendJson(res, 200, {
           sessionId: session.id,
           currentDir: session.currentDir,
-          model: currentModel,
+          model: currentSettings.model,
           reply: result.reply,
           events: result.events,
           finishReason: result.finishReason,
@@ -441,7 +696,10 @@ async function startGeminiWebServer(options = {}) {
           typeof body.message === "string" ? body.message.trim() : "";
         if (!message) {
           sendJson(res, 400, { error: "message is required" });
-          reqLogger.warn("http_request_end", { status: 400, route: "chat/stream" });
+          reqLogger.warn("http_request_end", {
+            status: 400,
+            route: "chat/stream",
+          });
           return;
         }
 
@@ -458,21 +716,35 @@ async function startGeminiWebServer(options = {}) {
         });
 
         // Send session ID immediately so the client can track it
-        res.write(`data: ${JSON.stringify({ type: "session", sessionId: session.id })}\n\n`);
+        res.write(
+          `data: ${JSON.stringify({ type: "session", sessionId: session.id })}\n\n`,
+        );
 
         let closed = false;
-        req.on("close", () => { closed = true; });
+        req.on("close", () => {
+          closed = true;
+        });
 
         try {
-          await agent.sendMessage(session, message, (event) => {
-            if (closed) return;
-            res.write(`data: ${JSON.stringify(event)}\n\n`);
-          });
+          await agent.sendMessage(
+            session,
+            message,
+            (event) => {
+              if (closed) return;
+              res.write(`data: ${JSON.stringify(event)}\n\n`);
+            },
+            currentSettings,
+          );
           saveSession(sessionsDir, session).catch(() => {});
         } catch (streamError) {
           if (!closed) {
-            const errMsg = streamError instanceof Error ? streamError.message : String(streamError);
-            res.write(`data: ${JSON.stringify({ type: "error", message: errMsg })}\n\n`);
+            const errMsg =
+              streamError instanceof Error
+                ? streamError.message
+                : String(streamError);
+            res.write(
+              `data: ${JSON.stringify({ type: "error", message: errMsg })}\n\n`,
+            );
           }
         }
 
@@ -480,7 +752,11 @@ async function startGeminiWebServer(options = {}) {
           res.write("data: [DONE]\n\n");
           res.end();
         }
-        reqLogger.info("http_request_end", { status: 200, route: "chat/stream", sessionId: session.id });
+        reqLogger.info("http_request_end", {
+          status: 200,
+          route: "chat/stream",
+          sessionId: session.id,
+        });
         return;
       }
 
@@ -499,12 +775,12 @@ async function startGeminiWebServer(options = {}) {
   server.listen(runtime.port, "127.0.0.1", () => {
     console.log(`Local Code Agent running at http://localhost:${runtime.port}`);
     console.log(`Auth token: ${authToken}`);
-    console.log(`Model: ${currentModel}`);
-    console.log(`Max turns: ${runtime.maxTurns}`);
-    console.log(`Max tool calls: ${runtime.maxToolCalls}`);
-    console.log(`Command timeout ms: ${runtime.commandTimeoutMs}`);
+    console.log(`Model: ${currentSettings.model}`);
+    console.log(`Max turns: ${currentSettings.maxTurns}`);
+    console.log(`Max tool calls: ${currentSettings.maxToolCalls}`);
+    console.log(`Command timeout ms: ${currentSettings.commandTimeoutMs}`);
     console.log(`Logs: ${logger.getLogFilePath() || "disabled"}`);
-    if (runtime.allowOutsideRoot) {
+    if (currentSettings.allowOutsideRoot) {
       console.log("Outside-root file access: enabled");
     }
     console.log("Tip: Use Ctrl/Cmd+Enter to send quickly from the textarea.");

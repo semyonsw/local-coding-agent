@@ -4,19 +4,201 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Local Code Agent</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x1F916;</text></svg>">
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x1F916;</text></svg>"
+    />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
     <div class="app">
+      <div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
+      <button
+        id="settingsToggleBtn"
+        class="drawer-toggle-btn"
+        type="button"
+        aria-label="Open settings panel"
+        aria-expanded="false"
+        title="Open settings"
+      >
+        &#x2192;
+      </button>
+      <aside id="settingsDrawer" class="settings-drawer" aria-hidden="true">
+        <div class="drawer-header">
+          <div>
+            <div class="drawer-title">Agent Parameters</div>
+            <div class="drawer-subtitle">Live runtime controls</div>
+          </div>
+        </div>
+
+        <div class="drawer-scroll">
+          <section class="drawer-section">
+            <h3>Inference</h3>
+            <label class="drawer-field" for="settingModel">
+              <span>Model</span>
+              <select id="settingModel"></select>
+            </label>
+
+            <label class="drawer-field" for="settingTemperature">
+              <span
+                >Temperature
+                <strong id="settingTemperatureValue">0.20</strong></span
+              >
+              <input
+                id="settingTemperature"
+                type="range"
+                min="0"
+                max="2"
+                step="0.01"
+              />
+              <div class="range-endpoints">
+                <span>0.00</span><span>2.00</span>
+              </div>
+            </label>
+
+            <label class="drawer-field" for="settingTopP">
+              <span>Top P <strong id="settingTopPValue">0.95</strong></span>
+              <input
+                id="settingTopP"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+              />
+              <div class="range-endpoints">
+                <span>0.00</span><span>1.00</span>
+              </div>
+            </label>
+
+            <label class="drawer-field" for="settingTopK">
+              <span>Top K <strong id="settingTopKValue">40</strong></span>
+              <input id="settingTopK" type="range" min="1" max="200" step="1" />
+              <div class="range-endpoints"><span>1</span><span>200</span></div>
+            </label>
+
+            <label class="drawer-field" for="settingMaxOutputTokens">
+              <span
+                >Max Output Tokens
+                <strong id="settingMaxOutputTokensValue">8192</strong></span
+              >
+              <input
+                id="settingMaxOutputTokens"
+                type="range"
+                min="256"
+                max="65536"
+                step="128"
+              />
+              <div class="range-endpoints">
+                <span>256</span><span>65536</span>
+              </div>
+            </label>
+
+            <label class="drawer-field" for="settingThinkingMode">
+              <span>Thinking Mode</span>
+              <select id="settingThinkingMode">
+                <option value="adaptive">adaptive</option>
+                <option value="enabled">enabled</option>
+                <option value="disabled">disabled</option>
+              </select>
+            </label>
+
+            <label class="drawer-field" for="settingThinkingBudget">
+              <span
+                >Thinking Budget
+                <strong id="settingThinkingBudgetValue">0</strong></span
+              >
+              <input
+                id="settingThinkingBudget"
+                type="range"
+                min="0"
+                max="32768"
+                step="256"
+              />
+              <div class="range-endpoints">
+                <span>0</span><span>32768</span>
+              </div>
+            </label>
+
+            <label class="drawer-field" for="settingSystemPrompt">
+              <span>System Prompt</span>
+              <textarea
+                id="settingSystemPrompt"
+                rows="4"
+                placeholder="Add custom behavior for the agent..."
+              ></textarea>
+            </label>
+          </section>
+
+          <section class="drawer-section">
+            <h3>Agent Loop</h3>
+            <label class="drawer-field" for="settingMaxTurns">
+              <span
+                >Max Turns <strong id="settingMaxTurnsValue">10</strong></span
+              >
+              <input
+                id="settingMaxTurns"
+                type="range"
+                min="1"
+                max="200"
+                step="1"
+              />
+              <div class="range-endpoints"><span>1</span><span>200</span></div>
+            </label>
+
+            <label class="drawer-field" for="settingMaxToolCalls">
+              <span
+                >Max Tool Calls
+                <strong id="settingMaxToolCallsValue">20</strong></span
+              >
+              <input
+                id="settingMaxToolCalls"
+                type="range"
+                min="1"
+                max="200"
+                step="1"
+              />
+              <div class="range-endpoints"><span>1</span><span>200</span></div>
+            </label>
+
+            <label class="drawer-field" for="settingCommandTimeoutMs">
+              <span
+                >Command Timeout (ms)
+                <strong id="settingCommandTimeoutMsValue">15000</strong></span
+              >
+              <input
+                id="settingCommandTimeoutMs"
+                type="range"
+                min="1000"
+                max="60000"
+                step="500"
+              />
+              <div class="range-endpoints">
+                <span>1000</span><span>60000</span>
+              </div>
+            </label>
+          </section>
+
+          <section class="drawer-section">
+            <h3>Runtime</h3>
+            <label class="drawer-toggle" for="settingAllowOutsideRoot">
+              <input id="settingAllowOutsideRoot" type="checkbox" />
+              <span>Allow outside-root file access</span>
+            </label>
+          </section>
+        </div>
+
+        <div class="drawer-footer">
+          <button id="settingsResetBtn" type="button">Reset Defaults</button>
+          <div id="settingsSaveState" class="save-state">Ready</div>
+        </div>
+      </aside>
+
       <div class="header">
         <div>
           <div class="title">Local Code Agent</div>
           <div id="modelMeta" class="meta">Model: {{MODEL}}</div>
         </div>
         <div class="controls">
-          <label class="control-label" for="modelSelect">Model</label>
-          <select id="modelSelect"></select>
           <button id="newBtn" type="button">New Session</button>
           <button id="exportBtn" type="button">Export</button>
         </div>
@@ -25,9 +207,15 @@
       <div id="chat" class="chat"></div>
       <div class="composer">
         <div class="composer-bubble">
-          <textarea id="prompt" rows="1" placeholder="Ask about code, request file edits, or run repo commands..."></textarea>
+          <textarea
+            id="prompt"
+            rows="1"
+            placeholder="Ask about code, request file edits, or run repo commands..."
+          ></textarea>
         </div>
-        <button id="sendBtn" type="button" title="Send (Ctrl+Enter)">&#x2191;</button>
+        <button id="sendBtn" type="button" title="Send (Ctrl+Enter)">
+          &#x2191;
+        </button>
       </div>
       <div id="status" class="status">Ready.</div>
     </div>

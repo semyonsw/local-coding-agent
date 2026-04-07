@@ -1,7 +1,7 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { parseModelTurn } = require("../gemini-api");
+const { parseModelTurn, postGenerateContent } = require("../gemini-api");
 
 describe("parseModelTurn", () => {
   it("extracts text from a simple response", () => {
@@ -127,5 +127,73 @@ describe("parseModelTurn", () => {
 
     const result = parseModelTurn(payload);
     assert.equal(result.text, "Line 1\nLine 2");
+  });
+});
+
+describe("postGenerateContent", () => {
+  it("sends topP/topK and thinking budget in generation config", async () => {
+    const originalFetch = global.fetch;
+    let capturedBody = null;
+
+    global.fetch = async (_url, options) => {
+      capturedBody = JSON.parse(options.body);
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { candidates: [] };
+        },
+      };
+    };
+
+    await postGenerateContent({
+      apiKey: "test-key",
+      model: "gemini-3-flash-preview",
+      contents: [{ role: "user", parts: [{ text: "hello" }] }],
+      temperature: 0.4,
+      topP: 0.8,
+      topK: 32,
+      maxOutputTokens: 2048,
+      thinkingMode: "adaptive",
+      thinkingBudget: 4096,
+    });
+
+    assert.equal(capturedBody.generationConfig.temperature, 0.4);
+    assert.equal(capturedBody.generationConfig.topP, 0.8);
+    assert.equal(capturedBody.generationConfig.topK, 32);
+    assert.equal(capturedBody.generationConfig.maxOutputTokens, 2048);
+    assert.deepEqual(capturedBody.generationConfig.thinkingConfig, {
+      thinkingBudget: 4096,
+    });
+
+    global.fetch = originalFetch;
+  });
+
+  it("omits thinking config when thinking mode is disabled", async () => {
+    const originalFetch = global.fetch;
+    let capturedBody = null;
+
+    global.fetch = async (_url, options) => {
+      capturedBody = JSON.parse(options.body);
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { candidates: [] };
+        },
+      };
+    };
+
+    await postGenerateContent({
+      apiKey: "test-key",
+      model: "gemini-3-flash-preview",
+      contents: [{ role: "user", parts: [{ text: "hello" }] }],
+      thinkingMode: "disabled",
+      thinkingBudget: 8192,
+    });
+
+    assert.equal(capturedBody.generationConfig.thinkingConfig, undefined);
+
+    global.fetch = originalFetch;
   });
 });

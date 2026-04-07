@@ -25,6 +25,33 @@ function parsePositiveInt(value, name, { min = 1, max } = {}) {
   return numeric;
 }
 
+function parseNumberInRange(
+  value,
+  name,
+  { min = Number.NEGATIVE_INFINITY, max = Number.POSITIVE_INFINITY } = {},
+) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < min || numeric > max) {
+    throw new Error(
+      `Invalid ${name}: ${String(value)} (must be between ${min} and ${max})`,
+    );
+  }
+  return numeric;
+}
+
+function parseEnum(value, name, allowed, fallback) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (allowed.includes(normalized)) {
+    return normalized;
+  }
+  throw new Error(
+    `Invalid ${name}: ${String(value)} (must be one of ${allowed.join(", ")})`,
+  );
+}
+
 function parseDotEnv(content) {
   const result = {};
   const lines = content.split(/\r?\n/);
@@ -137,11 +164,40 @@ function getGeminiRuntimeConfig(options = {}) {
     { max: 65536 },
   );
 
+  const temperature = parseNumberInRange(
+    process.env.GEMINI_TEMPERATURE || "0.2",
+    "GEMINI_TEMPERATURE",
+    { min: 0, max: 2 },
+  );
+
+  const topP = parseNumberInRange(
+    process.env.GEMINI_TOP_P || "0.95",
+    "GEMINI_TOP_P",
+    { min: 0, max: 1 },
+  );
+
+  const topK = parsePositiveInt(
+    process.env.GEMINI_TOP_K || "40",
+    "GEMINI_TOP_K",
+    { min: 1, max: 200 },
+  );
+
   const thinkingBudgetRaw = process.env.GEMINI_THINKING_BUDGET || "0";
   const thinkingBudget = Number(thinkingBudgetRaw);
   if (!Number.isFinite(thinkingBudget) || thinkingBudget < 0) {
-    throw new Error(`Invalid GEMINI_THINKING_BUDGET: ${String(thinkingBudgetRaw)}`);
+    throw new Error(
+      `Invalid GEMINI_THINKING_BUDGET: ${String(thinkingBudgetRaw)}`,
+    );
   }
+
+  const thinkingMode = parseEnum(
+    process.env.GEMINI_THINKING_MODE || "adaptive",
+    "GEMINI_THINKING_MODE",
+    ["adaptive", "enabled", "disabled"],
+    "adaptive",
+  );
+
+  const systemPrompt = String(process.env.GEMINI_SYSTEM_PROMPT || "").trim();
 
   return {
     apiKey,
@@ -151,6 +207,11 @@ function getGeminiRuntimeConfig(options = {}) {
     maxToolCalls,
     commandTimeoutMs,
     maxOutputTokens,
+    temperature,
+    topP,
+    topK,
+    systemPrompt,
+    thinkingMode,
     thinkingBudget,
     logDir,
     logLevel,

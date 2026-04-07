@@ -3,9 +3,15 @@
 
 let sessionId = null;
 const ALLOWED_MODELS = __ALLOWED_MODELS__;
-let currentModel = __INITIAL_MODEL__;
 const AUTH_TOKEN = __AUTH_TOKEN__;
 const authHeaders = { authorization: "Bearer " + AUTH_TOKEN };
+const SETTINGS_STORAGE_KEY = "gemini-web-settings-v1";
+
+let currentSettings = null;
+let defaultSettings = null;
+let isHydratingSettingsUI = false;
+let settingsSaveTimer = null;
+let settingsRequestNonce = 0;
 
 const chat = document.getElementById("chat");
 const promptEl = document.getElementById("prompt");
@@ -13,11 +19,261 @@ const sendBtn = document.getElementById("sendBtn");
 const newBtn = document.getElementById("newBtn");
 const exportBtn = document.getElementById("exportBtn");
 const statusEl = document.getElementById("status");
-const modelSelectEl = document.getElementById("modelSelect");
 const modelMetaEl = document.getElementById("modelMeta");
 
+const drawerEl = document.getElementById("settingsDrawer");
+const drawerBackdropEl = document.getElementById("drawerBackdrop");
+const settingsToggleBtn = document.getElementById("settingsToggleBtn");
+const settingsResetBtn = document.getElementById("settingsResetBtn");
+const settingsSaveStateEl = document.getElementById("settingsSaveState");
+
+const controls = {
+  model: document.getElementById("settingModel"),
+  temperature: document.getElementById("settingTemperature"),
+  temperatureValue: document.getElementById("settingTemperatureValue"),
+  topP: document.getElementById("settingTopP"),
+  topPValue: document.getElementById("settingTopPValue"),
+  topK: document.getElementById("settingTopK"),
+  topKValue: document.getElementById("settingTopKValue"),
+  maxOutputTokens: document.getElementById("settingMaxOutputTokens"),
+  maxOutputTokensValue: document.getElementById("settingMaxOutputTokensValue"),
+  thinkingMode: document.getElementById("settingThinkingMode"),
+  thinkingBudget: document.getElementById("settingThinkingBudget"),
+  thinkingBudgetValue: document.getElementById("settingThinkingBudgetValue"),
+  systemPrompt: document.getElementById("settingSystemPrompt"),
+  maxTurns: document.getElementById("settingMaxTurns"),
+  maxTurnsValue: document.getElementById("settingMaxTurnsValue"),
+  maxToolCalls: document.getElementById("settingMaxToolCalls"),
+  maxToolCallsValue: document.getElementById("settingMaxToolCallsValue"),
+  commandTimeoutMs: document.getElementById("settingCommandTimeoutMs"),
+  commandTimeoutMsValue: document.getElementById(
+    "settingCommandTimeoutMsValue",
+  ),
+  allowOutsideRoot: document.getElementById("settingAllowOutsideRoot"),
+};
+
 function smoothScrollToBottom() {
-  chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' });
+  chat.scrollTo({ top: chat.scrollHeight, behavior: "smooth" });
+}
+
+function updateModelMeta(model) {
+  modelMetaEl.textContent = "Model: " + model;
+}
+
+function setSaveState(text, tone) {
+  settingsSaveStateEl.textContent = text;
+  settingsSaveStateEl.dataset.tone = tone || "neutral";
+}
+
+function updateDrawerToggleState(isOpen) {
+  settingsToggleBtn.textContent = isOpen ? "\u2190" : "\u2192";
+  settingsToggleBtn.setAttribute(
+    "aria-label",
+    isOpen ? "Close settings panel" : "Open settings panel",
+  );
+  settingsToggleBtn.setAttribute("aria-expanded", String(isOpen));
+  settingsToggleBtn.title = isOpen ? "Close settings" : "Open settings";
+}
+
+function setDrawerOpen(isOpen) {
+  drawerEl.classList.toggle("open", isOpen);
+  drawerEl.setAttribute("aria-hidden", String(!isOpen));
+  drawerBackdropEl.hidden = !isOpen;
+  document.body.classList.toggle("drawer-open", isOpen);
+  updateDrawerToggleState(isOpen);
+  if (isOpen) {
+    controls.model.focus();
+  }
+}
+
+function renderModelOptions(models, selectedModel) {
+  controls.model.innerHTML = "";
+  for (const model of models) {
+    const option = document.createElement("option");
+    option.value = model;
+    option.textContent = model;
+    option.selected = model === selectedModel;
+    controls.model.appendChild(option);
+  }
+}
+
+function readPersistedSettings() {
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistSettings(settings) {
+  try {
+    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+  } catch {
+    // Ignore quota or storage lock issues.
+  }
+}
+
+function clearPersistedSettings() {
+  try {
+    window.localStorage.removeItem(SETTINGS_STORAGE_KEY);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function renderSettingValues() {
+  controls.temperatureValue.textContent = Number(
+    controls.temperature.value,
+  ).toFixed(2);
+  controls.topPValue.textContent = Number(controls.topP.value).toFixed(2);
+  controls.topKValue.textContent = String(
+    Math.round(Number(controls.topK.value)),
+  );
+  controls.maxOutputTokensValue.textContent = String(
+    Math.round(Number(controls.maxOutputTokens.value)),
+  );
+  controls.thinkingBudgetValue.textContent = String(
+    Math.round(Number(controls.thinkingBudget.value)),
+  );
+  controls.maxTurnsValue.textContent = String(
+    Math.round(Number(controls.maxTurns.value)),
+  );
+  controls.maxToolCallsValue.textContent = String(
+    Math.round(Number(controls.maxToolCalls.value)),
+  );
+  controls.commandTimeoutMsValue.textContent = String(
+    Math.round(Number(controls.commandTimeoutMs.value)),
+  );
+
+  const thinkingMode = controls.thinkingMode.value;
+  controls.thinkingBudget.disabled = thinkingMode === "disabled";
+}
+
+function applySettingsToControls(settings) {
+  isHydratingSettingsUI = true;
+
+  controls.model.value = settings.model;
+  controls.temperature.value = String(settings.temperature);
+  controls.topP.value = String(settings.topP);
+  controls.topK.value = String(settings.topK);
+  controls.maxOutputTokens.value = String(settings.maxOutputTokens);
+  controls.thinkingMode.value = settings.thinkingMode;
+  controls.thinkingBudget.value = String(settings.thinkingBudget);
+  controls.systemPrompt.value = settings.systemPrompt || "";
+  controls.maxTurns.value = String(settings.maxTurns);
+  controls.maxToolCalls.value = String(settings.maxToolCalls);
+  controls.commandTimeoutMs.value = String(settings.commandTimeoutMs);
+  controls.allowOutsideRoot.checked = !!settings.allowOutsideRoot;
+
+  renderSettingValues();
+  updateModelMeta(settings.model);
+
+  isHydratingSettingsUI = false;
+}
+
+function collectSettingsFromControls() {
+  return {
+    model: controls.model.value,
+    temperature: Number(controls.temperature.value),
+    topP: Number(controls.topP.value),
+    topK: Math.round(Number(controls.topK.value)),
+    maxOutputTokens: Math.round(Number(controls.maxOutputTokens.value)),
+    thinkingMode: controls.thinkingMode.value,
+    thinkingBudget: Math.round(Number(controls.thinkingBudget.value)),
+    systemPrompt: controls.systemPrompt.value,
+    maxTurns: Math.round(Number(controls.maxTurns.value)),
+    maxToolCalls: Math.round(Number(controls.maxToolCalls.value)),
+    commandTimeoutMs: Math.round(Number(controls.commandTimeoutMs.value)),
+    allowOutsideRoot: !!controls.allowOutsideRoot.checked,
+  };
+}
+
+async function postSettings(payload, options = {}) {
+  const nonce = ++settingsRequestNonce;
+  if (!options.silent) {
+    setSaveState("Saving...", "saving");
+  }
+
+  const res = await fetch("/api/settings", {
+    method: "POST",
+    headers: { ...authHeaders, "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to update settings");
+  }
+
+  if (nonce !== settingsRequestNonce) {
+    return;
+  }
+
+  currentSettings = data.settings;
+  if (data.defaults) {
+    defaultSettings = data.defaults;
+  }
+  applySettingsToControls(currentSettings);
+  persistSettings(currentSettings);
+
+  if (!options.silent) {
+    setSaveState("Saved", "ok");
+    setTimeout(() => {
+      if (settingsSaveStateEl.dataset.tone === "ok") {
+        setSaveState("Ready", "neutral");
+      }
+    }, 900);
+  }
+}
+
+function scheduleSettingsSave(delayMs) {
+  clearTimeout(settingsSaveTimer);
+  settingsSaveTimer = setTimeout(async () => {
+    try {
+      await postSettings(collectSettingsFromControls());
+      statusEl.textContent = "Settings updated.";
+    } catch (error) {
+      setSaveState("Save failed", "error");
+      statusEl.textContent = "Settings update failed: " + error.message;
+    }
+  }, delayMs);
+}
+
+async function loadSettings() {
+  setSaveState("Loading...", "neutral");
+  const res = await fetch("/api/settings", { headers: authHeaders });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to load settings");
+  }
+
+  defaultSettings = data.defaults || null;
+  currentSettings = data.settings;
+
+  const models =
+    Array.isArray(data.allowedModels) && data.allowedModels.length
+      ? data.allowedModels
+      : ALLOWED_MODELS;
+  renderModelOptions(models, currentSettings.model);
+
+  const persisted = readPersistedSettings();
+  if (persisted) {
+    applySettingsToControls({ ...currentSettings, ...persisted });
+    try {
+      await postSettings(collectSettingsFromControls(), { silent: true });
+      statusEl.textContent = "Loaded saved settings.";
+    } catch (error) {
+      statusEl.textContent = "Saved settings invalid: " + error.message;
+      applySettingsToControls(currentSettings);
+    }
+  } else {
+    applySettingsToControls(currentSettings);
+  }
+
+  setSaveState("Ready", "neutral");
 }
 
 window.addEventListener("error", (e) => {
@@ -72,7 +328,7 @@ function revealWordsProgressively(containerEl, onProgress) {
   const walker = document.createTreeWalker(
     containerEl,
     NodeFilter.SHOW_TEXT,
-    null
+    null,
   );
   let node;
   while ((node = walker.nextNode())) {
@@ -141,76 +397,6 @@ function revealWordsProgressively(containerEl, onProgress) {
   }
 
   requestAnimationFrame(revealNext);
-}
-
-// ---------------------------------------------------------------------------
-// Model controls
-// ---------------------------------------------------------------------------
-function updateModelMeta(model) {
-  modelMetaEl.textContent = "Model: " + model;
-}
-
-function renderModelOptions(models, selectedModel) {
-  modelSelectEl.innerHTML = "";
-  for (const model of models) {
-    const option = document.createElement("option");
-    option.value = model;
-    option.textContent = model;
-    option.selected = model === selectedModel;
-    modelSelectEl.appendChild(option);
-  }
-}
-
-async function loadModels() {
-  try {
-    const res = await fetch("/api/models", { headers: authHeaders });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || "Failed to load model list");
-    }
-
-    const models =
-      Array.isArray(data.models) && data.models.length
-        ? data.models
-        : ALLOWED_MODELS;
-
-    currentModel = data.model || currentModel;
-    renderModelOptions(models, currentModel);
-    updateModelMeta(currentModel);
-  } catch (error) {
-    renderModelOptions(ALLOWED_MODELS, currentModel);
-    statusEl.textContent = "Model list unavailable: " + error.message;
-  }
-}
-
-async function changeModel(model) {
-  if (!model || model === currentModel) return;
-
-  modelSelectEl.disabled = true;
-  statusEl.textContent = "Switching model to " + model + "...";
-
-  try {
-    const res = await fetch("/api/model", {
-      method: "POST",
-      headers: { ...authHeaders, "content-type": "application/json" },
-      body: JSON.stringify({ model }),
-    });
-
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || "Failed to switch model");
-    }
-
-    currentModel = data.model;
-    updateModelMeta(currentModel);
-    modelSelectEl.value = currentModel;
-    statusEl.textContent = "Model switched: " + currentModel;
-  } catch (error) {
-    modelSelectEl.value = currentModel;
-    statusEl.textContent = "Model switch failed: " + error.message;
-  } finally {
-    modelSelectEl.disabled = false;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -321,7 +507,7 @@ async function sendPrompt() {
   thinkingEl.className = "thinking-indicator";
   thinkingEl.innerHTML =
     '<div class="thinking-dots"><span></span><span></span><span></span></div>' +
-    '<span>Thinking...</span>';
+    "<span>Thinking...</span>";
 
   msgDiv.appendChild(labelEl);
   msgDiv.appendChild(bodyEl);
@@ -363,7 +549,11 @@ async function sendPrompt() {
           if (raw === "[DONE]") continue;
 
           let event;
-          try { event = JSON.parse(raw); } catch { continue; }
+          try {
+            event = JSON.parse(raw);
+          } catch {
+            continue;
+          }
 
           if (event.type === "session") {
             sessionId = event.sessionId;
@@ -376,7 +566,8 @@ async function sendPrompt() {
             activityEl.style.display = "";
             const item = document.createElement("div");
             item.className = "tool-item";
-            item.innerHTML = '<span class="spinner"></span> ' + event.name + "...";
+            item.innerHTML =
+              '<span class="spinner"></span> ' + event.name + "...";
             activityEl.appendChild(item);
             toolItems.set(event.name + "_" + collectedEvents.length, item);
             smoothScrollToBottom();
@@ -392,7 +583,8 @@ async function sendPrompt() {
                 const item = toolItems.get(keys[i]);
                 if (item && item.querySelector(".spinner")) {
                   const icon = event.ok ? "icon-ok" : "icon-fail";
-                  item.innerHTML = '<span class="' + icon + '"></span> ' + event.name;
+                  item.innerHTML =
+                    '<span class="' + icon + '"></span> ' + event.name;
                   break;
                 }
               }
@@ -403,11 +595,11 @@ async function sendPrompt() {
 
           if (event.type === "thinking") {
             if (thinkingEl.parentNode) thinkingEl.remove();
-            var thinkingDetails = document.createElement("details");
+            const thinkingDetails = document.createElement("details");
             thinkingDetails.className = "events thinking-content";
-            var thinkingSummary = document.createElement("summary");
+            const thinkingSummary = document.createElement("summary");
             thinkingSummary.textContent = "Thinking";
-            var thinkingPre = document.createElement("pre");
+            const thinkingPre = document.createElement("pre");
             thinkingPre.textContent = event.text;
             thinkingDetails.appendChild(thinkingSummary);
             thinkingDetails.appendChild(thinkingPre);
@@ -492,7 +684,9 @@ async function exportSession() {
       throw new Error(data.error || "Export failed");
     }
     const data = await res.json();
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: "application/json",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -507,16 +701,59 @@ async function exportSession() {
   }
 }
 
+function addSettingsEventListeners() {
+  const saveNow = () => {
+    if (isHydratingSettingsUI) return;
+    renderSettingValues();
+    scheduleSettingsSave(220);
+  };
+
+  controls.model.addEventListener("change", saveNow);
+  controls.temperature.addEventListener("input", saveNow);
+  controls.topP.addEventListener("input", saveNow);
+  controls.topK.addEventListener("input", saveNow);
+  controls.maxOutputTokens.addEventListener("input", saveNow);
+  controls.thinkingMode.addEventListener("change", saveNow);
+  controls.thinkingBudget.addEventListener("input", saveNow);
+  controls.maxTurns.addEventListener("input", saveNow);
+  controls.maxToolCalls.addEventListener("input", saveNow);
+  controls.commandTimeoutMs.addEventListener("input", saveNow);
+  controls.allowOutsideRoot.addEventListener("change", saveNow);
+
+  controls.systemPrompt.addEventListener("input", () => {
+    if (isHydratingSettingsUI) return;
+    scheduleSettingsSave(600);
+  });
+
+  settingsResetBtn.addEventListener("click", async () => {
+    try {
+      await postSettings({ resetToDefaults: true });
+      clearPersistedSettings();
+      statusEl.textContent = "Settings reset to defaults.";
+    } catch (error) {
+      setSaveState("Reset failed", "error");
+      statusEl.textContent = "Reset failed: " + error.message;
+    }
+  });
+
+  settingsToggleBtn.addEventListener("click", () => {
+    const willOpen = !drawerEl.classList.contains("open");
+    setDrawerOpen(willOpen);
+  });
+  drawerBackdropEl.addEventListener("click", () => setDrawerOpen(false));
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && drawerEl.classList.contains("open")) {
+      setDrawerOpen(false);
+    }
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Event listeners
 // ---------------------------------------------------------------------------
 sendBtn.addEventListener("click", sendPrompt);
 newBtn.addEventListener("click", newSession);
 exportBtn.addEventListener("click", exportSession);
-modelSelectEl.addEventListener("change", (event) => {
-  const value = event.target && event.target.value;
-  changeModel(value);
-});
 promptEl.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
     e.preventDefault();
@@ -530,4 +767,9 @@ promptEl.addEventListener("input", () => {
   promptEl.style.height = Math.min(promptEl.scrollHeight, 160) + "px";
 });
 
-loadModels();
+updateDrawerToggleState(false);
+addSettingsEventListeners();
+loadSettings().catch((error) => {
+  setSaveState("Unavailable", "error");
+  statusEl.textContent = "Settings load failed: " + error.message;
+});

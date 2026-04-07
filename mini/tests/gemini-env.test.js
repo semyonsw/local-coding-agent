@@ -4,7 +4,10 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 
-const { getGeminiRuntimeConfig, loadDotEnvIfPresent } = require("../gemini-env");
+const {
+  getGeminiRuntimeConfig,
+  loadDotEnvIfPresent,
+} = require("../gemini-env");
 
 const TEST_ROOT = path.join(os.tmpdir(), "gemini-env-test-" + Date.now());
 
@@ -32,7 +35,7 @@ describe("loadDotEnvIfPresent", () => {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(
       path.join(dir, ".env"),
-      'TEST_KEY_1="value1"\nTEST_KEY_2=value2\n# comment\nTEST_KEY_3=\'value3\'\n',
+      "TEST_KEY_1=\"value1\"\nTEST_KEY_2=value2\n# comment\nTEST_KEY_3='value3'\n",
     );
 
     // Clear before test
@@ -84,6 +87,11 @@ describe("getGeminiRuntimeConfig", () => {
     delete process.env.GEMINI_MAX_TURNS;
     delete process.env.GEMINI_MAX_TOOL_CALLS;
     delete process.env.GEMINI_MAX_OUTPUT_TOKENS;
+    delete process.env.GEMINI_TEMPERATURE;
+    delete process.env.GEMINI_TOP_P;
+    delete process.env.GEMINI_TOP_K;
+    delete process.env.GEMINI_THINKING_MODE;
+    delete process.env.GEMINI_SYSTEM_PROMPT;
   });
 
   it("returns default config values", () => {
@@ -95,6 +103,11 @@ describe("getGeminiRuntimeConfig", () => {
     assert.equal(config.maxToolCalls, 20);
     assert.equal(config.allowOutsideRoot, false);
     assert.equal(config.maxOutputTokens, 8192);
+    assert.equal(config.temperature, 0.2);
+    assert.equal(config.topP, 0.95);
+    assert.equal(config.topK, 40);
+    assert.equal(config.thinkingMode, "adaptive");
+    assert.equal(config.systemPrompt, "");
   });
 
   it("respects model override", () => {
@@ -129,10 +142,31 @@ describe("getGeminiRuntimeConfig", () => {
     );
   });
 
-  it("throws when rootDir is missing", () => {
+  it("rejects temperature outside allowed range", () => {
+    process.env.GEMINI_TEMPERATURE = "2.5";
     assert.throws(
-      () => getGeminiRuntimeConfig({}),
-      /requires rootDir/,
+      () => getGeminiRuntimeConfig({ rootDir: TEST_ROOT }),
+      /GEMINI_TEMPERATURE/,
     );
+  });
+
+  it("rejects top_p outside allowed range", () => {
+    process.env.GEMINI_TOP_P = "-0.2";
+    assert.throws(
+      () => getGeminiRuntimeConfig({ rootDir: TEST_ROOT }),
+      /GEMINI_TOP_P/,
+    );
+  });
+
+  it("rejects unsupported thinking mode", () => {
+    process.env.GEMINI_THINKING_MODE = "always";
+    assert.throws(
+      () => getGeminiRuntimeConfig({ rootDir: TEST_ROOT }),
+      /GEMINI_THINKING_MODE/,
+    );
+  });
+
+  it("throws when rootDir is missing", () => {
+    assert.throws(() => getGeminiRuntimeConfig({}), /requires rootDir/);
   });
 });

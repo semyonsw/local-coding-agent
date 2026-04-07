@@ -21,8 +21,11 @@ async function postGenerateContent({
   systemInstruction,
   functionDeclarations,
   temperature = 0.2,
+  topP,
+  topK,
   maxOutputTokens = 8192,
   retryCount = 3,
+  thinkingMode = "adaptive",
   thinkingBudget,
 }) {
   const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent`;
@@ -35,10 +38,24 @@ async function postGenerateContent({
     },
   };
 
-  if (typeof thinkingBudget === "number" && thinkingBudget > 0) {
-    body.generationConfig.thinkingConfig = {
-      thinkingBudget: thinkingBudget,
-    };
+  if (typeof topP === "number") {
+    body.generationConfig.topP = topP;
+  }
+
+  if (typeof topK === "number") {
+    body.generationConfig.topK = topK;
+  }
+
+  if (thinkingMode !== "disabled") {
+    if (typeof thinkingBudget === "number" && thinkingBudget > 0) {
+      body.generationConfig.thinkingConfig = {
+        thinkingBudget: thinkingBudget,
+      };
+    } else if (thinkingMode === "enabled") {
+      body.generationConfig.thinkingConfig = {
+        thinkingBudget: 1024,
+      };
+    }
   }
 
   if (systemInstruction) {

@@ -51,9 +51,14 @@ Optional env vars:
 - `GEMINI_MAX_TURNS` (default: `10`)
 - `GEMINI_MAX_TOOL_CALLS` (default: `20`)
 - `GEMINI_COMMAND_TIMEOUT_MS` (default: `15000`)
+- `GEMINI_TEMPERATURE` (default: `0.2`)
+- `GEMINI_TOP_P` (default: `0.95`)
+- `GEMINI_TOP_K` (default: `40`)
+- `GEMINI_THINKING_MODE` (default: `adaptive`; options: `adaptive`, `enabled`, `disabled`)
 - `GEMINI_LOG_DIR` (default: `logs`)
 - `GEMINI_LOG_LEVEL` (default: `info`)
 - `GEMINI_LOG_MAX_BYTES` (default: `5000000`)
+- `GEMINI_SYSTEM_PROMPT` (default: empty)
 - `GEMINI_ALLOW_OUTSIDE_ROOT` (default: `true`)
 
 Logging:

@@ -22,6 +22,9 @@ const statusEl = document.getElementById("status");
 const modelMetaEl = document.getElementById("modelMeta");
 const appEl = document.querySelector(".app");
 const onboardingEl = document.getElementById("onboarding");
+const onboardingCapabilitiesEl = document.getElementById(
+  "onboardingCapabilities",
+);
 const composerEl = document.getElementById("composer");
 
 const drawerEl = document.getElementById("settingsDrawer");
@@ -35,6 +38,52 @@ const reducedMotionQuery = window.matchMedia(
   "(prefers-reduced-motion: reduce)",
 );
 let sessionHasUserMessages = false;
+
+const ONBOARDING_PROMPTS_PER_SESSION = 5;
+const ONBOARDING_PROMPT_LIBRARY = [
+  "Find the real Desktop folder and create an empty names.txt file there.",
+  "Create a new todo.md in this workspace with sections for Bugs, Features, and Notes.",
+  'Open README.md and add a short "Quick Start" section if it is missing.',
+  "Search this repo for TODO comments and summarize the top 10 by impact.",
+  "Find where sendPrompt is defined and explain how messages flow to the backend.",
+  "Navigate to mini/public and list the files that control UI layout and styles.",
+  "Run a fast search for onboarding and show every file touching onboarding behavior.",
+  "Check git status and summarize unstaged changes in plain English.",
+  "Show the diff for mini/public/app.js and explain what behavior changed.",
+  "Export the latest session and provide a short index of keys in the JSON.",
+  "Find all range sliders in the UI and list their IDs with min and max values.",
+  "Locate where New Session is implemented and describe exactly what state is reset.",
+  "Create a scratch file named investigation-notes.txt on Desktop and write one line into it.",
+  "Search for hard-coded colors in mini/public/style.css and suggest which should become tokens.",
+  "Run a command to list top-level folders and explain what each appears to do.",
+  "Find all fetch calls in mini/public/app.js and summarize the API endpoints used.",
+  "Locate where model settings are loaded and persisted between refreshes.",
+  "Create docs/ui-prompts.md and draft 8 useful starter prompts for this project.",
+  "Find references to GEMINI_ALLOW_OUTSIDE_ROOT and explain path safety behavior.",
+  "Summarize the last 5 commits that touched files under mini/public.",
+  "Check for TypeScript errors in the workspace and return the first 5 actionable issues.",
+  "Scan commands/ for anything related to review and list command names.",
+  "Find where tool_start and tool_end events are rendered in the chat UI.",
+  "Add a brief comment above armOnboardingComposer explaining why it resets sessionHasUserMessages.",
+  "Identify CSS selectors in mini/public/style.css that are not used by index.html.",
+  "Run a search for settingsResetBtn and map the reset flow end-to-end.",
+  "Compare index.html and app.js onboarding logic and note any mismatch.",
+  "Create desktop-path-check.txt on Desktop with the detected absolute path.",
+  "Find all keyboard shortcuts in the web UI and summarize how each is triggered.",
+  "Show the exact code path that handles Ctrl+Enter message sending.",
+  "List every environment variable documented for gemini-web and what each controls.",
+  "Find where markdown rendering happens in the chat and note any sanitization risks.",
+  "Run a quick security pass for file-write operations and summarize safeguards.",
+  "Generate a short changelog entry for today's UI updates in CHANGELOG.md.",
+  "Search for accent-color and propose a cohesive blue palette for this dark theme.",
+  "Find all onboarding strings and prepare them for future i18n extraction.",
+  "Create a minimal reproduction note for any bug found in new session reset behavior.",
+  "Trace how sessionId is created, stored, and reused across requests.",
+  "List all buttons in the header and explain their click handlers.",
+  "Summarize tool activity formatting and where failed tool calls are highlighted.",
+  "Find duplicated logic between send button click and keyboard send handlers.",
+  "Run a quick repo inventory and provide counts of ts, tsx, js, and css files.",
+];
 
 const controls = {
   model: document.getElementById("settingModel"),
@@ -114,6 +163,7 @@ function dockComposerFromOnboarding() {
 
 function armOnboardingComposer() {
   sessionHasUserMessages = false;
+  renderOnboardingPrompts();
   setComposerLayout("centered");
 }
 
@@ -164,6 +214,39 @@ function renderModelOptions(models, selectedModel) {
     option.textContent = model;
     option.selected = model === selectedModel;
     controls.model.appendChild(option);
+  }
+}
+
+function sampleOnboardingPrompts(pool, count) {
+  const shuffled = pool.slice();
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const swapIndex = Math.floor(Math.random() * (i + 1));
+    const temp = shuffled[i];
+    shuffled[i] = shuffled[swapIndex];
+    shuffled[swapIndex] = temp;
+  }
+  return shuffled.slice(0, Math.min(count, shuffled.length));
+}
+
+function renderOnboardingPrompts() {
+  if (!onboardingCapabilitiesEl) {
+    return;
+  }
+
+  onboardingCapabilitiesEl.innerHTML = "";
+  const prompts = sampleOnboardingPrompts(
+    ONBOARDING_PROMPT_LIBRARY,
+    ONBOARDING_PROMPTS_PER_SESSION,
+  );
+
+  for (const prompt of prompts) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "onboarding-capability";
+    button.setAttribute("role", "listitem");
+    button.dataset.prompt = prompt;
+    button.textContent = prompt;
+    onboardingCapabilitiesEl.appendChild(button);
   }
 }
 
@@ -334,7 +417,7 @@ async function loadSettings() {
     applySettingsToControls({ ...currentSettings, ...persisted });
     try {
       await postSettings(collectSettingsFromControls(), { silent: true });
-      statusEl.textContent = "Loaded saved settings.";
+      statusEl.textContent = "Ready.";
     } catch (error) {
       statusEl.textContent = "Saved settings invalid: " + error.message;
       applySettingsToControls(currentSettings);
@@ -550,9 +633,12 @@ function parseSSELines(text) {
   return events;
 }
 
-async function sendPrompt() {
-  const message = promptEl.value.trim();
-  if (!message) return;
+async function sendPrompt(messageOverride) {
+  const message =
+    typeof messageOverride === "string"
+      ? messageOverride.trim()
+      : promptEl.value.trim();
+  if (!message || sendBtn.disabled) return;
 
   markSessionActivatedByFirstPrompt();
   addMessage("user", message);
@@ -829,6 +915,26 @@ function addSettingsEventListeners() {
 sendBtn.addEventListener("click", sendPrompt);
 newBtn.addEventListener("click", newSession);
 exportBtn.addEventListener("click", exportSession);
+if (onboardingCapabilitiesEl) {
+  onboardingCapabilitiesEl.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    const button = target.closest(".onboarding-capability");
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+
+    const prompt = button.dataset.prompt || "";
+    if (!prompt.trim()) {
+      return;
+    }
+
+    sendPrompt(prompt);
+  });
+}
 promptEl.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
     e.preventDefault();

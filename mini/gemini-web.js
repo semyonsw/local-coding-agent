@@ -803,4 +803,10 @@ async function startGeminiWebServer(options = {}) {
 
 module.exports = {
   startGeminiWebServer,
+  __test: {
+    SETTINGS_BOUNDS,
+    THINKING_MODES,
+    buildDefaultSettings,
+    normalizeSettingsUpdate,
+  },
 };

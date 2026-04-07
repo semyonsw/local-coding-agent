@@ -20,12 +20,21 @@ const newBtn = document.getElementById("newBtn");
 const exportBtn = document.getElementById("exportBtn");
 const statusEl = document.getElementById("status");
 const modelMetaEl = document.getElementById("modelMeta");
+const appEl = document.querySelector(".app");
+const onboardingEl = document.getElementById("onboarding");
+const composerEl = document.getElementById("composer");
 
 const drawerEl = document.getElementById("settingsDrawer");
 const drawerBackdropEl = document.getElementById("drawerBackdrop");
 const settingsToggleBtn = document.getElementById("settingsToggleBtn");
 const settingsResetBtn = document.getElementById("settingsResetBtn");
 const settingsSaveStateEl = document.getElementById("settingsSaveState");
+
+const COMPOSER_DOCK_ANIMATION_MS = 1100;
+const reducedMotionQuery = window.matchMedia(
+  "(prefers-reduced-motion: reduce)",
+);
+let sessionHasUserMessages = false;
 
 const controls = {
   model: document.getElementById("settingModel"),
@@ -54,6 +63,67 @@ const controls = {
 
 function smoothScrollToBottom() {
   chat.scrollTo({ top: chat.scrollHeight, behavior: "smooth" });
+}
+
+function prefersReducedMotion() {
+  return reducedMotionQuery.matches;
+}
+
+function setComposerLayout(mode) {
+  const isCentered = mode === "centered";
+  appEl.classList.toggle("composer-centered", isCentered);
+  appEl.classList.toggle("composer-docked", !isCentered);
+  onboardingEl.setAttribute("aria-hidden", String(!isCentered));
+  onboardingEl.inert = !isCentered;
+}
+
+function dockComposerFromOnboarding() {
+  if (!appEl.classList.contains("composer-centered")) {
+    return;
+  }
+
+  const startRect = composerEl.getBoundingClientRect();
+  setComposerLayout("docked");
+
+  if (prefersReducedMotion()) {
+    return;
+  }
+
+  const endRect = composerEl.getBoundingClientRect();
+  const translateX = startRect.left - endRect.left;
+  const translateY = startRect.top - endRect.top;
+
+  composerEl.animate(
+    [
+      {
+        transform: `translate(${translateX}px, ${translateY}px) scale(0.99)`,
+        opacity: 0.94,
+      },
+      {
+        transform: "translate(0px, 0px) scale(1)",
+        opacity: 1,
+      },
+    ],
+    {
+      duration: COMPOSER_DOCK_ANIMATION_MS,
+      easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+      fill: "none",
+    },
+  );
+}
+
+function armOnboardingComposer() {
+  sessionHasUserMessages = false;
+  setComposerLayout("centered");
+}
+
+function markSessionActivatedByFirstPrompt() {
+  if (sessionHasUserMessages) {
+    return;
+  }
+
+  sessionHasUserMessages = true;
+  dockComposerFromOnboarding();
 }
 
 function updateModelMeta(model) {
@@ -484,6 +554,7 @@ async function sendPrompt() {
   const message = promptEl.value.trim();
   if (!message) return;
 
+  markSessionActivatedByFirstPrompt();
   addMessage("user", message);
   promptEl.value = "";
   promptEl.style.height = "auto";
@@ -667,6 +738,10 @@ async function sendPrompt() {
 async function newSession() {
   sessionId = null;
   chat.innerHTML = "";
+  armOnboardingComposer();
+  promptEl.value = "";
+  promptEl.style.height = "auto";
+  promptEl.focus();
   statusEl.textContent = "New session ready.";
 }
 
@@ -767,6 +842,7 @@ promptEl.addEventListener("input", () => {
   promptEl.style.height = Math.min(promptEl.scrollHeight, 160) + "px";
 });
 
+armOnboardingComposer();
 updateDrawerToggleState(false);
 addSettingsEventListeners();
 loadSettings().catch((error) => {

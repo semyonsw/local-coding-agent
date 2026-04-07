@@ -32,12 +32,26 @@ body.drawer-open {
   height: 100dvh;
   width: 100%;
   overflow: hidden;
+  position: relative;
   background:
     radial-gradient(1200px 300px at 8% -10%, #121212 0%, transparent 52%),
     radial-gradient(1000px 300px at 96% -18%, #0d0d0d 0%, transparent 50%),
     var(--bg);
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto 1fr auto auto;
+}
+
+.header,
+.onboarding,
+.chat,
+.composer,
+.status {
+  grid-column: 1;
+}
+
+.header {
+  grid-row: 1;
 }
 
 .drawer-backdrop {
@@ -262,6 +276,84 @@ body.drawer-open .drawer-toggle-btn {
   font-size: 14px;
 }
 
+.onboarding {
+  grid-row: 2;
+  padding: 24px clamp(12px, 3vw, 32px);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  opacity: 0;
+  transform: translateY(18px);
+  pointer-events: none;
+  transition:
+    opacity 520ms ease,
+    transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 4;
+}
+
+.onboarding-panel {
+  width: min(980px, 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 22px;
+  padding: clamp(22px, 4vw, 34px);
+  background:
+    radial-gradient(
+      460px 180px at 10% 0%,
+      rgba(122, 197, 255, 0.16),
+      transparent 64%
+    ),
+    radial-gradient(
+      360px 150px at 100% 10%,
+      rgba(255, 193, 120, 0.12),
+      transparent 66%
+    ),
+    rgba(10, 10, 10, 0.72);
+  backdrop-filter: blur(8px);
+  box-shadow:
+    0 22px 50px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+}
+
+.onboarding-kicker {
+  margin: 0 0 10px;
+  color: #95cfff;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.onboarding h2 {
+  margin: 0;
+  font-size: clamp(26px, 4vw, 44px);
+  line-height: 1.08;
+  letter-spacing: 0.4px;
+}
+
+.onboarding-copy {
+  margin: 14px 0 0;
+  max-width: 80ch;
+  font-size: clamp(14px, 1.8vw, 17px);
+  line-height: 1.52;
+  color: #d7d7d7;
+}
+
+.onboarding-capabilities {
+  margin-top: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.onboarding-capabilities span {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 12px;
+  color: #ececec;
+  background: rgba(255, 255, 255, 0.04);
+}
+
 .controls {
   display: flex;
   align-items: center;
@@ -284,11 +376,14 @@ select {
 }
 
 .chat {
+  grid-row: 2;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 18px clamp(12px, 3vw, 32px);
   scroll-behavior: smooth;
   min-height: 0;
+  transition: opacity 280ms ease;
+  z-index: 2;
 }
 
 .msg {
@@ -367,6 +462,7 @@ select {
 }
 
 .composer {
+  grid-row: 3;
   padding: 10px clamp(12px, 3vw, 32px) 14px;
   display: flex;
   align-items: flex-end;
@@ -377,6 +473,44 @@ select {
     rgba(0, 0, 0, 0.6) 100%
   );
   border-top: none;
+  z-index: 6;
+}
+
+.app.composer-centered .onboarding {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.app.composer-centered .chat {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.app.composer-centered .composer {
+  grid-row: 2;
+  grid-column: 1;
+  align-self: start;
+  justify-self: center;
+  width: min(920px, calc(100% - 40px));
+  margin-top: clamp(248px, 40vh, 420px);
+  padding: 0;
+  background: transparent;
+}
+
+.app.composer-docked .onboarding {
+  opacity: 0;
+  transform: translateY(-14px);
+  pointer-events: none;
+}
+
+.app.composer-docked .chat {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.status {
+  grid-row: 4;
 }
 
 .composer-bubble {
@@ -706,6 +840,32 @@ button:disabled {
     flex-direction: column;
   }
 
+  .onboarding {
+    padding-top: 14px;
+  }
+
+  .onboarding-panel {
+    border-radius: 16px;
+    padding: 16px;
+  }
+
+  .onboarding h2 {
+    font-size: clamp(22px, 8vw, 30px);
+  }
+
+  .onboarding-copy {
+    font-size: 14px;
+  }
+
+  .onboarding-capabilities {
+    gap: 8px;
+  }
+
+  .onboarding-capabilities span {
+    font-size: 11px;
+    padding: 6px 10px;
+  }
+
   .controls {
     width: 100%;
     display: grid;
@@ -720,6 +880,11 @@ button:disabled {
 
   button {
     height: 42px;
+  }
+
+  .app.composer-centered .composer {
+    width: calc(100% - 24px);
+    margin-top: clamp(220px, 36vh, 360px);
   }
 
   .drawer-toggle-btn {

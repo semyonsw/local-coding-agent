@@ -38,6 +38,7 @@ function createGeminiAgent(config) {
     "Prefer reading before writing. Explain file changes clearly.",
     "When a user asks to go/switch/open a folder, call change_dir first and then use relative paths from that directory.",
     "When using run_command, avoid destructive operations.",
+    "You have web_search and web_fetch tools. Use web_search to find current information, documentation, or solutions online. Use web_fetch to read a specific URL. Prefer local workspace tools for code tasks.",
   ].join(" ");
 
   function buildSystemInstruction(customSystemPrompt) {
@@ -225,6 +226,11 @@ function createGeminiAgent(config) {
             allowOutsideRoot: effectiveAllowOutsideRoot,
             currentDir: session.currentDir,
             logger,
+            searxngUrl: config.searxngUrl,
+            webSearchEnabled: config.webSearchEnabled,
+            webFetchEnabled: config.webFetchEnabled,
+            webFetchMaxBytes: config.webFetchMaxBytes,
+            webFetchTimeoutMs: config.webFetchTimeoutMs,
           },
         );
 

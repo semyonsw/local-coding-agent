@@ -10,6 +10,7 @@ const {
   loadAllSessions,
   deleteSession,
 } = require("./gemini-sessions");
+const { startSearxng, stopSearxng } = require("./searxng-manager");
 
 const ALLOWED_MODELS = [
   "gemini-3-pro-preview",
@@ -330,6 +331,11 @@ async function startGeminiWebServer(options = {}) {
     apiKey: runtime.apiKey,
     ...currentSettings,
     logger: logger.child({ component: "agent" }),
+    searxngUrl: runtime.searxngUrl,
+    webSearchEnabled: runtime.webSearchEnabled,
+    webFetchEnabled: runtime.webFetchEnabled,
+    webFetchMaxBytes: runtime.webFetchMaxBytes,
+    webFetchTimeoutMs: runtime.webFetchTimeoutMs,
   });
 
   serverLogger.info("server_boot", {
@@ -348,6 +354,23 @@ async function startGeminiWebServer(options = {}) {
   const sessions = await loadAllSessions(sessionsDir, serverLogger);
   if (sessions.size > 0) {
     serverLogger.info("sessions_restored", { count: sessions.size });
+  }
+
+  let searxngState = { started: false };
+  if (runtime.webSearchEnabled) {
+    searxngState = await startSearxng({
+      rootDir,
+      logger: serverLogger,
+    });
+    if (searxngState.started) {
+      console.log(
+        searxngState.adopted
+          ? `SearXNG: reusing running container at ${runtime.searxngUrl}`
+          : `SearXNG: started at ${runtime.searxngUrl}`,
+      );
+    } else {
+      console.log(`SearXNG: disabled (${searxngState.reason})`);
+    }
   }
 
   function evictStaleSessions() {
@@ -787,18 +810,42 @@ async function startGeminiWebServer(options = {}) {
   });
 
   // Graceful shutdown
-  function shutdown(signal) {
+  let shuttingDown = false;
+  async function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
     serverLogger.info("shutdown_start", { signal });
     console.log(`\nReceived ${signal}, shutting down...`);
     clearInterval(cleanupTimer);
-    server.close(() => {
-      serverLogger.info("shutdown_complete");
-      process.exit(0);
-    });
-    setTimeout(() => process.exit(1), 5000).unref();
+
+    // Force exit after 10s if graceful shutdown hangs
+    const forceExitTimer = setTimeout(() => process.exit(1), 10000);
+    forceExitTimer.unref();
+
+    await new Promise((resolve) => server.close(() => resolve()));
+
+    // Only stop SearXNG if we started it ourselves (not adopted)
+    if (searxngState.started && !searxngState.adopted) {
+      console.log("Stopping SearXNG container...");
+      try {
+        await stopSearxng({ logger: serverLogger });
+        console.log("SearXNG stopped.");
+      } catch (error) {
+        serverLogger.error("searxng_stop_error", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    serverLogger.info("shutdown_complete");
+    process.exit(0);
   }
-  process.on("SIGINT", () => shutdown("SIGINT"));
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => {
+    shutdown("SIGINT").catch(() => process.exit(1));
+  });
+  process.on("SIGTERM", () => {
+    shutdown("SIGTERM").catch(() => process.exit(1));
+  });
 }
 
 module.exports = {

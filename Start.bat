@@ -62,6 +62,22 @@ if errorlevel 1 (
   exit /b 1
 )
 
+rem Docker preflight: web search needs Docker to run SearXNG.
+rem Agent will auto-start/stop the container; if Docker is missing, web search is disabled.
+set "DOCKER_READY=0"
+where docker >nul 2>&1
+if not errorlevel 1 (
+  docker version --format "{{.Server.Version}}" >nul 2>&1
+  if not errorlevel 1 (
+    set "DOCKER_READY=1"
+    echo [Start.bat] Docker detected: web search enabled (SearXNG managed by the agent)
+  ) else (
+    echo [WARN] Docker CLI found but daemon not responding. Start Docker Desktop to enable web search.
+  )
+) else (
+  echo [WARN] Docker not found. Web search will be disabled. Install Docker Desktop to enable it.
+)
+
 if "%CHECK_ONLY%"=="1" (
   if "%USE_WSL_NODE%"=="1" (
     echo [OK] Preflight checks passed using WSL Node.
@@ -76,7 +92,7 @@ if "%OPEN_BROWSER%"=="1" (
 )
 
 echo [Start.bat] Launching Gemini web agent...
-echo [Start.bat] Press Ctrl+C to stop.
+echo [Start.bat] Press Ctrl+C to stop (SearXNG container stops automatically).
 echo [Start.bat] Logs default to .\logs\gemini-web-YYYY-MM-DD.log
 if "%GEMINI_ALLOW_OUTSIDE_ROOT%"=="" (
   echo [Start.bat] Outside-root file access: enabled by default
@@ -97,6 +113,17 @@ if "%USE_WSL_NODE%"=="1" (
 ) else (
   "%NODE_CMD%" cc-mini.js gemini-web
   set "EXIT_CODE=%ERRORLEVEL%"
+)
+
+rem Safety net: if the agent was force-killed without running its shutdown
+rem handler, make sure the SearXNG container isn't left running.
+if "%DOCKER_READY%"=="1" (
+  for /f "delims=" %%N in ('docker ps --filter "name=^searxng-mini$" --format "{{.Names}}" 2^>nul') do (
+    if /I "%%N"=="searxng-mini" (
+      echo [Start.bat] Cleaning up leftover SearXNG container...
+      docker stop searxng-mini >nul 2>&1
+    )
+  )
 )
 
 if not "%EXIT_CODE%"=="0" (

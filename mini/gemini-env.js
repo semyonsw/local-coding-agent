@@ -199,6 +199,28 @@ function getGeminiRuntimeConfig(options = {}) {
 
   const systemPrompt = String(process.env.GEMINI_SYSTEM_PROMPT || "").trim();
 
+  const searxngUrl = String(
+    process.env.SEARXNG_URL || "http://localhost:8080",
+  ).trim();
+  const webSearchEnabled = parseBoolean(
+    process.env.WEB_SEARCH_ENABLED,
+    true,
+  );
+  const webFetchEnabled = parseBoolean(
+    process.env.WEB_FETCH_ENABLED,
+    true,
+  );
+  const webFetchMaxBytes = parsePositiveInt(
+    process.env.WEB_FETCH_MAX_BYTES || "100000",
+    "WEB_FETCH_MAX_BYTES",
+    { max: 500000 },
+  );
+  const webFetchTimeoutMs = parsePositiveInt(
+    process.env.WEB_FETCH_TIMEOUT_MS || "10000",
+    "WEB_FETCH_TIMEOUT_MS",
+    { max: 30000 },
+  );
+
   return {
     apiKey,
     model,
@@ -217,6 +239,11 @@ function getGeminiRuntimeConfig(options = {}) {
     logLevel,
     logMaxBytes,
     allowOutsideRoot,
+    searxngUrl,
+    webSearchEnabled,
+    webFetchEnabled,
+    webFetchMaxBytes,
+    webFetchTimeoutMs,
   };
 }
 

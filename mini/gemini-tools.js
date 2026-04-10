@@ -7,6 +7,8 @@ const { noopLogger } = require("./gemini-logger");
 const MAX_FILE_READ_BYTES = 200_000;
 const MAX_WRITE_BYTES = 200_000;
 const MAX_COMMAND_OUTPUT = 24_000;
+const MAX_SEARCH_RESULTS = 20;
+const MAX_FETCH_BYTES = 500_000;
 
 const COMMON_DIR_ALIASES = {
   desktop: "Desktop",
@@ -378,6 +380,152 @@ async function changeDirTool(rootDir, args, options = {}) {
   };
 }
 
+function stripHtmlToText(html) {
+  let text = html.replace(/<script[\s\S]*?<\/script>/gi, "");
+  text = text.replace(/<style[\s\S]*?<\/style>/gi, "");
+  text = text.replace(/<[^>]+>/g, " ");
+  text = text.replace(/\s{2,}/g, " ").trim();
+  text = text
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ");
+  return text;
+}
+
+async function webSearchTool(args, options = {}) {
+  const query = args.query;
+  if (!query || typeof query !== "string") {
+    throw new Error("web_search requires a query string");
+  }
+
+  if (options.webSearchEnabled === false) {
+    throw new Error("Web search is disabled");
+  }
+
+  const searxngUrl = options.searxngUrl || "http://localhost:8080";
+  const maxResults = Math.min(
+    Math.max(Number(args.maxResults) || 5, 1),
+    MAX_SEARCH_RESULTS,
+  );
+  const categories =
+    typeof args.categories === "string" ? args.categories : "general";
+
+  const params = new URLSearchParams({
+    q: query,
+    format: "json",
+    categories,
+  });
+
+  const url = `${searxngUrl}/search?${params.toString()}`;
+
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(options.webFetchTimeoutMs || 10000),
+  });
+
+  if (!response.ok) {
+    throw new Error(`SearXNG returned status ${response.status}`);
+  }
+
+  const data = await response.json();
+  const results = (data.results || []).slice(0, maxResults).map((r) => ({
+    title: r.title || "",
+    url: r.url || "",
+    snippet: truncate(r.content || "", 500),
+    engine: r.engine || "",
+  }));
+
+  return {
+    ok: true,
+    data: {
+      query,
+      resultCount: results.length,
+      results,
+    },
+  };
+}
+
+async function webFetchTool(args, options = {}) {
+  const url = args.url;
+  if (!url || typeof url !== "string") {
+    throw new Error("web_fetch requires a url string");
+  }
+
+  if (options.webFetchEnabled === false) {
+    throw new Error("Web fetch is disabled");
+  }
+
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    throw new Error("web_fetch only supports http:// and https:// URLs");
+  }
+
+  const parsed = new URL(url);
+  const blockedHosts = [
+    "169.254.169.254",
+    "metadata.google.internal",
+    "100.100.100.200",
+  ];
+  if (blockedHosts.includes(parsed.hostname)) {
+    throw new Error("Fetching this host is not allowed");
+  }
+
+  const maxBytes = Math.min(
+    Math.max(Number(args.maxBytes) || options.webFetchMaxBytes || 100000, 1000),
+    MAX_FETCH_BYTES,
+  );
+  const timeoutMs = options.webFetchTimeoutMs || 10000;
+
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: {
+      "user-agent": "MiniAgent/1.0 (local coding assistant)",
+    },
+    redirect: "follow",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Fetch returned status ${response.status}`);
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.length;
+    chunks.push(value);
+    if (totalBytes >= maxBytes) break;
+  }
+
+  try {
+    reader.cancel();
+  } catch {}
+
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  let text = decoder.decode(Buffer.concat(chunks).subarray(0, maxBytes));
+
+  if (contentType.includes("text/html")) {
+    text = stripHtmlToText(text);
+  }
+
+  return {
+    ok: true,
+    data: {
+      url,
+      contentType,
+      bytesRead: Math.min(totalBytes, maxBytes),
+      truncated: totalBytes > maxBytes,
+      content: truncate(text, maxBytes),
+    },
+  };
+}
+
 const TOOL_DECLARATIONS = [
   {
     name: "list_dir",
@@ -462,6 +610,50 @@ const TOOL_DECLARATIONS = [
       required: ["path"],
     },
   },
+  {
+    name: "web_search",
+    description:
+      "Search the internet using SearXNG. Returns titles, URLs, and snippets for the top results. Use this to find documentation, solutions, current information, or API references.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        query: {
+          type: "STRING",
+          description: "Search query string",
+        },
+        maxResults: {
+          type: "NUMBER",
+          description:
+            "Maximum number of results to return (default 5, max 20)",
+        },
+        categories: {
+          type: "STRING",
+          description:
+            "Comma-separated SearXNG categories (e.g. 'general', 'it', 'science'). Default: 'general'",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "web_fetch",
+    description:
+      "Fetch a URL and return its text content. Useful for reading documentation, API references, or web pages found via web_search.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        url: {
+          type: "STRING",
+          description: "The URL to fetch (must be http:// or https://)",
+        },
+        maxBytes: {
+          type: "NUMBER",
+          description: "Maximum bytes to read (default 100000)",
+        },
+      },
+      required: ["url"],
+    },
+  },
 ];
 
 async function executeToolCall(rootDir, toolCall, options = {}) {
@@ -498,6 +690,20 @@ async function executeToolCall(rootDir, toolCall, options = {}) {
         break;
       case "change_dir":
         result = await changeDirTool(rootDir, args, options);
+        break;
+      case "web_search":
+        result = await webSearchTool(args, {
+          searxngUrl: options.searxngUrl,
+          webSearchEnabled: options.webSearchEnabled,
+          webFetchTimeoutMs: options.webFetchTimeoutMs,
+        });
+        break;
+      case "web_fetch":
+        result = await webFetchTool(args, {
+          webFetchEnabled: options.webFetchEnabled,
+          webFetchMaxBytes: options.webFetchMaxBytes,
+          webFetchTimeoutMs: options.webFetchTimeoutMs,
+        });
         break;
       default:
         result = { ok: false, error: `Unknown tool: ${String(name)}` };
